@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+    <meta charset="UTF-8">
+    <title>Prší 2026</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    <style>
+        body { background: #135d2d; color: white; font-family: sans-serif; text-align: center; margin: 0; overflow: hidden; }
+        .table { height: 100vh; display: flex; flex-direction: column; justify-content: space-around; }
+        
+        .hand { display: flex; justify-content: center; gap: 10px; height: 160px; }
+        .card { 
+            width: 100px; height: 150px; background: white; color: black; border-radius: 10px;
+            border: 2px solid #000; font-weight: bold; cursor: pointer;
+            display: flex; flex-direction: column; justify-content: center; transition: 0.2s;
+        }
+        .card:hover { transform: translateY(-20px); }
+        .card.Srdce, .card.Kule { color: #d32f2f; }
+        
+        .center-pile { display: flex; justify-content: center; gap: 40px; align-items: center; }
+        .deck-hidden { background: #5d1313; border: 3px solid white; color: white; cursor: pointer; }
+        
+        #msg { font-size: 24px; text-shadow: 2px 2px 4px rgba(0,0,0,0.5); color: #ffeb3b; }
+        .pc-card { background: #2c3e50; border: 2px solid #ecf0f1; }
+        .back-btn { position: fixed; top: 10px; left: 10px; color: white; text-decoration: none; background: rgba(0,0,0,0.3); padding: 5px 15px; border-radius: 5px; }
+    </style>
+</head>
+<body>
+    <a href="/" class="back-btn">← Menu</a>
+    <div class="table">
+        <div id="pc-hand" class="hand"></div>
+
+        <div class="center-pile">
+            <div class="card deck-hidden" onclick="drawCard()">LÍZNOUT</div>
+            <div id="stack-top"></div>
+        </div>
+
+        <div>
+            <div id="msg">Načítání hry...</div>
+            <div id="player-hand" class="hand"></div>
+        </div>
+    </div>
+
+    <script>
+        const socket = io();
+        
+        socket.on('connect', () => {
+            socket.emit('request_prsi_update');
+        });
+
+        socket.on('update_prsi', (data) => {
+            document.getElementById('msg').innerText = data.msg;
+            
+            // Horní karta na balíčku
+            const stackDiv = document.getElementById('stack-top');
+            stackDiv.innerHTML = createCardHTML(data.stack_top);
+
+            // Tvoje karty
+            const handDiv = document.getElementById('player-hand');
+            handDiv.innerHTML = '';
+            data.player_hand.forEach((card, index) => {
+                const cDiv = document.createElement('div');
+                cDiv.innerHTML = createCardHTML(card);
+                cDiv.firstChild.onclick = () => socket.emit('prsi_play', {index: index});
+                handDiv.appendChild(cDiv.firstChild);
+            });
+
+            // Karty počítače (jen rub)
+            const pcDiv = document.getElementById('pc-hand');
+            pcDiv.innerHTML = '';
+            for(let i=0; i < data.pc_hand_count; i++) {
+                pcDiv.innerHTML += '<div class="card pc-card"></div>';
+            }
+        });
+
+        function createCardHTML(card) {
+            return `<div class="card ${card.b}"><span>${card.h}</span><span>${card.b}</span></div>`;
+        }
+
+        function drawCard() {
+            socket.emit('prsi_draw');
+        }
+    </script>
+</body>
+</html>

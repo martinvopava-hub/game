@@ -1,1 +1,36 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+    <meta charset="UTF-8">
+    <title>Herní Centrum</title>
+    <style>
+        body { background: #0f0f0f; color: white; font-family: 'Segoe UI', sans-serif; text-align: center; padding-top: 50px; }
+        .hub { display: flex; justify-content: center; gap: 30px; margin-top: 40px; }
+        .card { 
+            background: #1a1a1a; border: 2px solid #444; padding: 40px; width: 200px; 
+            border-radius: 20px; text-decoration: none; color: white; transition: 0.3s;
+        }
+        .card:hover { border-color: #2ecc71; transform: translateY(-10px); background: #222; }
+        .icon { font-size: 60px; margin-bottom: 20px; display: block; }
+        h1 { color: #f1c40f; font-size: 3em; }
+    </style>
+</head>
+<body>
+    <h1>Multiplayer Herna</h1>
+    <p>Vyber si hru a hraj s přáteli v reálném čase</p>
+    
+    <div class="hub">
+        <a href="/kostky" class="card">
+            <span class="icon">🎲</span>
+            <h2>KOSTKY</h2>
+            <p>Hoď si a neriskuj nulu!</p>
+        </a>
 
+        <a href="/prsi" class="card" style="opacity: 0.5;">
+            <span class="icon">🃏</span>
+            <h2>PRŠÍ</h2>
+            <p>Již brzy...</p>
+        </a>
+    </div>
+</body>
+</html>

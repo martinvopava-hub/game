@@ -119,7 +119,6 @@ HTML_TEMPLATE = """
 <html>
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Kostky Arena 10000</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
     <style>
@@ -131,14 +130,16 @@ HTML_TEMPLATE = """
         .player-card { 
             width: 300px; padding: 20px; border-radius: 15px; transition: 0.4s; 
             background: #1a1a1a; border: 4px solid #444; position: relative;
-            display: flex; flex-direction: column; align-items: center; text-align: center;
+            text-align: center; /* ZAROVNÁNÍ OBSAHU NA STŘED */
         }
         
+        /* Aktivní hráč: Zelená */
         .player-card.active { 
             border-color: #2ecc71; background: #1e3a1e; 
             box-shadow: 0 0 25px rgba(46, 204, 113, 0.4); transform: scale(1.05); z-index: 10;
         }
         
+        /* Neaktivní hráč: Červená a tmavá */
         .player-card.inactive { 
             border-color: #e74c3c; opacity: 0.6; filter: grayscale(0.5);
         }
@@ -146,36 +147,22 @@ HTML_TEMPLATE = """
         .score-badge { font-size: 40px; font-weight: bold; margin: 10px 0; }
         .turn-pts { font-size: 20px; color: #2ecc71; min-height: 24px; }
         
-        /* Kontejner na kostky */
+        /* BOX PRO KOSTKY - ZAJIŠTĚNÍ VEDLE SEBE A NA STŘED */
         #dice-box {
             display: flex;
-            flex-wrap: wrap;
+            flex-wrap: nowrap;
             justify-content: center;
-            gap: 10px;
+            align-items: center;
+            gap: 5px;
             margin: 15px 0;
-            width: 100%;
+            min-height: 55px;
         }
 
-        .die { 
-            display: flex; align-items: center; justify-content: center;
-            width: 50px; height: 50px; background: white; color: black; 
-            border-radius: 8px; font-weight: bold; cursor: pointer; font-size: 24px; 
-            transition: transform 0.2s;
-        }
+        .die { width: 45px; height: 45px; line-height: 45px; background: white; color: black; 
+               border-radius: 8px; font-weight: bold; cursor: pointer; font-size: 22px; flex-shrink: 0; }
         .die.selected { background: #f1c40f; transform: translateY(-5px); box-shadow: 0 4px 0 #b7950b; }
         
-        /* Mobilní úprava - kostky 3 a 3 (grid) */
-        @media (max-width: 480px) {
-            #dice-box {
-                display: grid;
-                grid-template-columns: repeat(3, 1fr);
-                justify-items: center;
-                gap: 15px;
-            }
-            .player-card { width: 85vw; }
-        }
-
-        .controls { width: 100%; margin-top: 15px; }
+        .controls { margin-top: 15px; width: 100%; }
         .btn { width: 100%; padding: 12px; margin: 5px 0; border-radius: 8px; border: none; font-weight: bold; cursor: pointer; }
         .btn-roll { background: #2ecc71; color: white; }
         .btn-keep { background: #3498db; color: white; }
@@ -227,7 +214,7 @@ HTML_TEMPLATE = """
                     <h3>${p.name} ${isMe ? '(Ty)' : ''}</h3>
                     <div class="score-badge">${g.scores[p.id]}</div>
                     <div class="turn-pts">${isActive ? 'V tahu: ' + g.current_turn_pts : ''}</div>
-                    <hr style="border:0; border-top:1px solid rgba(255,255,255,0.1); width: 80%; margin:15px 0;">
+                    <hr style="border:0; border-top:1px solid rgba(255,255,255,0.1); margin:15px 0;">
                 `;
 
                 if (isActive) {

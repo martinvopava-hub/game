@@ -1,186 +1,198 @@
-from flask import Flask, render_template_string, request, session, redirect, url_for
+import eventlet
+eventlet.monkey_patch()  # Důležité pro stabilitu na Renderu
+
+import os
 import random
+from flask import Flask, render_template_string, request, session
+from flask_socketio import SocketIO, emit
 
 app = Flask(__name__)
-app.secret_key = 'tajny_klic_pro_session'
+app.config['SECRET_KEY'] = 'kostky-tajemstvi-2026'
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
+
+# --- GLOBÁLNÍ STAV HRY (pro zjednodušení v paměti) ---
+# V reálné velké aplikaci by zde byla databáze
+game_state = {
+    'total': 0,
+    'turn': 0,
+    'dice_count': 6,
+    'current_roll': [],
+    'msg': 'Čekám na první hod...',
+    'last_player': None
+}
 
 def vypocitej_vyber(vyber):
-    if not vyber:
-        return 0
-    
+    if not vyber: return 0
     counts = {}
-    for x in vyber:
-        counts[x] = counts.get(x, 0) + 1
+    for x in vyber: counts[x] = counts.get(x, 0) + 1
     
     body = 0
-    # NOVÁ PROMĚNNÁ: Postupka 1-2-3-4-5-6 = 2000 bodů
-    if len(counts) == 6:
-        return 2000
+    if len(counts) == 6: return 2000  # Postupka
 
     for num, count in counts.items():
         if num == 1:
-            # Jedničky: 1=100, 11=200, 111=1000, pak zdvojnásobování
-            if count < 3:
-                body += count * 100
-            else:
-                zaklad = 1000
-                body += zaklad * (2 ** (count - 3))
+            if count < 3: body += count * 100
+            else: body += 1000 * (2 ** (count - 3))
         elif num == 5:
-            # Pětky: 5=50, 55=100, 555=500, pak zdvojnásobování
-            if count < 3:
-                body += count * 50
-            else:
-                zaklad = 500
-                body += zaklad * (2 ** (count - 3))
+            if count < 3: body += count * 50
+            else: body += 500 * (2 ** (count - 3))
         else:
-            # Ostatní čísla (2,3,4,6): Pouze trojice a více
             if count >= 3:
                 zaklad = num * 100
                 body += zaklad * (2 ** (count - 3))
-            else:
-                # Neplatná kombinace (např. dvě dvojky)
-                return 0
+            else: return 0
     return body
 
 @app.route('/')
 def index():
-    if 'game' not in session:
-        session['game'] = {
-            'total': 0, 'turn': 0, 'dice_count': 6,
-            'current_roll': [], 'msg': 'Hra připravena. Hoďte si!'
-        }
-    return render_template_string(HTML_TEMPLATE, g=session['game'])
+    return render_template_string(HTML_TEMPLATE)
 
-@app.route('/action', methods=['POST'])
-def action():
-    g = session.get('game')
-    if not g: return redirect(url_for('index'))
+# --- SOCKET.IO UDÁLOSTI ---
 
-    if 'roll_action' in request.form:
-        g['current_roll'] = [random.randint(1, 6) for _ in range(g['dice_count'])]
-        
-        # Kontrola "smrti"
-        test_counts = {}
-        for x in g['current_roll']:
-            test_counts[x] = test_counts.get(x, 0) + 1
-            
-        mozne_body = 0
-        for n, cnt in test_counts.items():
-            if n == 1 or n == 5 or cnt >= 3 or len(test_counts) == 6:
-                mozne_body += 1
-        
-        if mozne_body == 0:
-            g['msg'] = f"❌ NULA! Nic nepadlo. Ztrácíte {g['turn']} bodů."
-            g['turn'] = 0
-            g['dice_count'] = 6
-            g['current_roll'] = []
-        else:
-            g['msg'] = "Vyberte bodované kostky."
+@socketio.on('connect')
+def handle_connect():
+    # Při připojení pošleme hráči aktuální stav
+    emit('update_game', game_state)
 
-    elif 'keep_action' in request.form:
-        indices_str = request.form.get('selected_indices', '')
-        if indices_str:
-            indices = [int(i) for i in indices_str.split(',')]
-            selected_values = [g['current_roll'][i] for i in indices]
-            
-            points = vypocitej_vyber(selected_values)
-            if points > 0:
-                g['turn'] += points
-                g['dice_count'] -= len(selected_values)
-                if g['dice_count'] == 0:
-                    g['dice_count'] = 6
-                g['current_roll'] = []
-                g['msg'] = f"Získáno {points} bodů. Celkem v tahu: {g['turn']}."
-            else:
-                g['msg'] = "⚠️ Neplatný výběr kombinace!"
+@socketio.on('roll_dice')
+def handle_roll():
+    global game_state
+    game_state['current_roll'] = [random.randint(1, 6) for _ in range(game_state['dice_count'])]
+    
+    # Kontrola nuly (smrti)
+    test_counts = {}
+    for x in game_state['current_roll']: test_counts[x] = test_counts.get(x, 0) + 1
+    mozne_body = any(n == 1 or n == 5 or cnt >= 3 for n, cnt in test_counts.items()) or len(test_counts) == 6
 
-    elif 'bank_action' in request.form:
-        if g['turn'] >= 350:
-            g['total'] += g['turn']
-            g['msg'] = f"💰 Zapsáno {g['turn']} bodů."
-            g['turn'] = 0
-            g['dice_count'] = 6
-            g['current_roll'] = []
-        else:
-            g['msg'] = "⚠️ Pro zápis musíte mít aspoň 350 bodů!"
+    if not mozne_body:
+        game_state['msg'] = f"❌ NULA! Ztráta {game_state['turn']} bodů."
+        game_state['turn'] = 0
+        game_state['dice_count'] = 6
+        game_state['current_roll'] = []
+    else:
+        game_state['msg'] = "Vyberte kostky a potvrďte."
+    
+    socketio.emit('update_game', game_state)
 
-    session['game'] = g
-    return redirect(url_for('index'))
+@socketio.on('keep_dice')
+def handle_keep(data):
+    global game_state
+    indices = data.get('indices', [])
+    selected_values = [game_state['current_roll'][i] for i in indices]
+    
+    points = vypocitej_vyber(selected_values)
+    if points > 0:
+        game_state['turn'] += points
+        game_state['dice_count'] -= len(selected_values)
+        if game_state['dice_count'] == 0: game_state['dice_count'] = 6
+        game_state['current_roll'] = []
+        game_state['msg'] = f"Získáno {points} bodů."
+    else:
+        game_state['msg'] = "⚠️ Neplatná kombinace!"
+    
+    socketio.emit('update_game', game_state)
 
-@app.route('/reset')
-def reset():
-    session.pop('game', None)
-    return redirect(url_for('index'))
+@socketio.on('bank_points')
+def handle_bank():
+    global game_state
+    if game_state['turn'] >= 350:
+        game_state['total'] += game_state['turn']
+        game_state['msg'] = f"💰 Zapsáno {game_state['turn']} bodů."
+        game_state['turn'] = 0
+        game_state['dice_count'] = 6
+        game_state['current_roll'] = []
+    else:
+        game_state['msg'] = "⚠️ Minimum pro zápis je 350!"
+    
+    socketio.emit('update_game', game_state)
 
+@socketio.on('reset_game')
+def handle_reset():
+    global game_state
+    game_state = { 'total': 0, 'turn': 0, 'dice_count': 6, 'current_roll': [], 'msg': 'Hra restartována.', 'last_player': None }
+    socketio.emit('update_game', game_state)
+
+# --- HTML ŠABLONA ---
 HTML_TEMPLATE = """
 <!DOCTYPE html>
-<html lang="cs">
+<html>
 <head>
     <meta charset="UTF-8">
-    <title>Kostky - Python Flask</title>
+    <title>Kostky MULTIPLAYER</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
     <style>
-        body { font-family: 'Segoe UI', sans-serif; background: #121212; color: white; display: flex; justify-content: center; padding-top: 30px; }
-        .table { background: #1e3a1e; padding: 30px; border-radius: 20px; box-shadow: 0 0 50px rgba(0,0,0,0.5); width: 480px; border: 8px solid #3e2723; text-align: center; }
-        .die { display: inline-block; width: 55px; height: 55px; line-height: 55px; background: white; color: black; font-size: 28px; font-weight: bold; border-radius: 10px; margin: 8px; cursor: pointer; transition: 0.2s; box-shadow: 3px 3px 0 #ccc; }
-        .die.selected { transform: translateY(-10px); background: #f1c40f; box-shadow: 0 5px 0 #b7950b; }
-        .btn { padding: 12px 20px; font-size: 16px; border-radius: 8px; border: none; cursor: pointer; font-weight: bold; margin: 5px 0; width: 100%; }
+        body { font-family: sans-serif; background: #121212; color: white; text-align: center; }
+        .table { background: #1e3a1e; padding: 20px; border-radius: 20px; width: 400px; margin: 50px auto; border: 5px solid #3e2723; }
+        .die { display: inline-block; width: 50px; height: 50px; line-height: 50px; background: white; color: black; 
+               margin: 5px; border-radius: 10px; font-weight: bold; cursor: pointer; font-size: 24px; }
+        .die.selected { background: #f1c40f; transform: translateY(-5px); box-shadow: 0 5px 0 #b7950b; }
+        .btn { width: 100%; padding: 10px; margin: 5px 0; font-weight: bold; cursor: pointer; border-radius: 5px; border: none; }
         .btn-roll { background: #2ecc71; color: white; }
         .btn-keep { background: #3498db; color: white; }
         .btn-bank { background: #e67e22; color: white; }
-        .status { background: rgba(0,0,0,0.4); padding: 15px; border-radius: 10px; margin-bottom: 20px; }
     </style>
 </head>
 <body>
-<div class="table">
-    <div class="status">
-        <div style="font-size: 14px; color: #aaa;">CELKOVÉ SKÓRE</div>
-        <div style="font-size: 36px; font-weight: bold;">{{ "{:,}".format(g.total) }}</div>
-        <div style="margin-top: 10px; color: #2ecc71; font-size: 18px;">V tahu: <strong>{{ g.turn }}</strong></div>
+    <div class="table">
+        <h1 id="total">0</h1>
+        <h3 id="turn" style="color: #2ecc71;">V tahu: 0</h3>
+        <p id="msg" style="color: #f1c40f;">Načítání...</p>
+        <div id="dice-container"></div>
+        <hr>
+        <div id="controls"></div>
+        <button onclick="resetHru()" style="background:none; border:none; color:#666; cursor:pointer; margin-top:10px;">Resetovat vše</button>
     </div>
-    <p style="min-height: 45px; color: #f1c40f;">{{ g.msg }}</p>
-    <div id="dice-container" style="min-height: 80px;">
-        {% for val in g.current_roll %}
-            <div class="die" onclick="toggleDie(this, {{ loop.index0 }})">{{ val }}</div>
-        {% endfor %}
-    </div>
-    <form action="/action" method="post" id="game-form">
-        <input type="hidden" name="selected_indices" id="selected_indices">
-        {% if not g.current_roll %}
-            <button type="submit" name="roll_action" class="btn btn-roll">HODIT KOSTKAMI ({{ g.dice_count }})</button>
-        {% else %}
-            <button type="button" onclick="confirmSelection()" class="btn btn-keep">POTVRDIT VÝBĚR</button>
-        {% endif %}
-        {% if g.turn > 0 %}
-            <button type="submit" name="bank_action" class="btn btn-bank">UKONČIT KOLO A ZAPSAT</button>
-        {% endif %}
-    </form>
-    <a href="/reset" style="color: #666; font-size: 13px; text-decoration: none; display: block; margin-top: 15px;">Nová hra / Reset</a>
-</div>
-<script>
-let selected = [];
-function toggleDie(el, idx) {
-    el.classList.toggle('selected');
-    if (selected.includes(idx)) {
-        selected = selected.filter(i => i !== idx);
-    } else {
-        selected.push(idx);
-    }
-}
-function confirmSelection() {
-    if (selected.length === 0) {
-        alert("Musíte vybrat aspoň jednu kostku!");
-        return;
-    }
-    document.getElementById('selected_indices').value = selected.join(',');
-    let input = document.createElement("input");
-    input.type = "hidden"; input.name = "keep_action";
-    document.getElementById('game-form').appendChild(input);
-    document.getElementById('game-form').submit();
-}
-</script>
+
+    <script>
+        const socket = io();
+        let selectedIndices = [];
+
+        socket.on('update_game', (data) => {
+            document.getElementById('total').innerText = data.total.toLocaleString();
+            document.getElementById('turn').innerText = "V tahu: " + data.turn;
+            document.getElementById('msg').innerText = data.msg;
+            
+            const container = document.getElementById('dice-container');
+            container.innerHTML = '';
+            data.current_roll.forEach((val, idx) => {
+                const d = document.createElement('div');
+                d.className = 'die' + (selectedIndices.includes(idx) ? ' selected' : '');
+                d.innerText = val;
+                d.onclick = () => {
+                    if (selectedIndices.includes(idx)) selectedIndices = selectedIndices.filter(i => i !== idx);
+                    else selectedIndices.push(idx);
+                    renderButtons(data.current_roll.length > 0);
+                    d.classList.toggle('selected');
+                };
+                container.appendChild(d);
+            });
+            renderButtons(data.current_roll.length > 0, data.turn);
+        });
+
+        function renderButtons(hasRoll, turn) {
+            const ctrl = document.getElementById('controls');
+            ctrl.innerHTML = '';
+            if (!hasRoll) {
+                ctrl.innerHTML = `<button class="btn btn-roll" onclick="socket.emit('roll_dice')">HODIT KOSTKAMI</button>`;
+            } else {
+                ctrl.innerHTML = `<button class="btn btn-keep" onclick="potvrditVyber()">POTVRDIT VÝBĚR</button>`;
+            }
+            if (turn > 0) {
+                ctrl.innerHTML += `<button class="btn btn-bank" onclick="socket.emit('bank_points')">ZAPSAT DO BANKU</button>`;
+            }
+        }
+
+        function potvrditVyber() {
+            socket.emit('keep_dice', { indices: selectedIndices });
+            selectedIndices = [];
+        }
+
+        function resetHru() { if(confirm("Opravdu resetovat hru pro všechny?")) socket.emit('reset_game'); }
+    </script>
 </body>
 </html>
 """
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    port = int(os.environ.get("PORT", 5000))
+    socketio.run(app, host='0.0.0.0', port=port)

@@ -4,7 +4,6 @@ import random
 app = Flask(__name__)
 app.secret_key = 'tajny_klic_pro_session'
 
-
 def vypocitej_vyber(vyber):
     if not vyber:
         return 0
@@ -14,72 +13,53 @@ def vypocitej_vyber(vyber):
         counts[x] = counts.get(x, 0) + 1
     
     body = 0
-
-    # Postupka 1-2-3-4-5-6 = 2000 bodů
+    # NOVÁ PROMĚNNÁ: Postupka 1-2-3-4-5-6 = 2000 bodů
     if len(counts) == 6:
         return 2000
 
     for num, count in counts.items():
         if num == 1:
+            # Jedničky: 1=100, 11=200, 111=1000, pak zdvojnásobování
             if count < 3:
                 body += count * 100
             else:
                 zaklad = 1000
                 body += zaklad * (2 ** (count - 3))
         elif num == 5:
+            # Pětky: 5=50, 55=100, 555=500, pak zdvojnásobování
             if count < 3:
                 body += count * 50
             else:
                 zaklad = 500
                 body += zaklad * (2 ** (count - 3))
         else:
+            # Ostatní čísla (2,3,4,6): Pouze trojice a více
             if count >= 3:
                 zaklad = num * 100
                 body += zaklad * (2 ** (count - 3))
             else:
+                # Neplatná kombinace (např. dvě dvojky)
                 return 0
     return body
 
-
-@app.route('/', methods=['GET', 'POST'])
+@app.route('/')
 def index():
-    # Pokud není přihlášen hráč → zobraz login
-    if 'player' not in session:
-        return render_template_string(LOGIN_TEMPLATE)
-
     if 'game' not in session:
         session['game'] = {
             'total': 0, 'turn': 0, 'dice_count': 6,
             'current_roll': [], 'msg': 'Hra připravena. Hoďte si!'
         }
-
-    return render_template_string(HTML_TEMPLATE, g=session['game'], player=session['player'])
-
-
-@app.route('/login', methods=['POST'])
-def login():
-    nickname = request.form.get('nickname')
-    if nickname:
-        session['player'] = nickname
-    return redirect(url_for('index'))
-
-
-@app.route('/logout')
-def logout():
-    session.pop('player', None)
-    session.pop('game', None)
-    return redirect(url_for('index'))
-
+    return render_template_string(HTML_TEMPLATE, g=session['game'])
 
 @app.route('/action', methods=['POST'])
 def action():
     g = session.get('game')
-    if not g:
-        return redirect(url_for('index'))
+    if not g: return redirect(url_for('index'))
 
     if 'roll_action' in request.form:
         g['current_roll'] = [random.randint(1, 6) for _ in range(g['dice_count'])]
         
+        # Kontrola "smrti"
         test_counts = {}
         for x in g['current_roll']:
             test_counts[x] = test_counts.get(x, 0) + 1
@@ -127,42 +107,10 @@ def action():
     session['game'] = g
     return redirect(url_for('index'))
 
-
 @app.route('/reset')
 def reset():
     session.pop('game', None)
     return redirect(url_for('index'))
-
-
-# ================= LOGIN TEMPLATE =================
-
-LOGIN_TEMPLATE = """
-<!DOCTYPE html>
-<html lang="cs">
-<head>
-    <meta charset="UTF-8">
-    <title>Přihlášení hráče</title>
-    <style>
-        body { font-family: 'Segoe UI'; background:#121212; color:white; display:flex; justify-content:center; align-items:center; height:100vh;}
-        .login-box { background:#1e3a1e; padding:40px; border-radius:20px; width:350px; text-align:center;}
-        input { width:100%; padding:12px; border-radius:8px; border:none; margin-top:15px; font-size:16px;}
-        button { margin-top:20px; padding:12px; width:100%; border:none; border-radius:8px; background:#2ecc71; color:white; font-weight:bold; font-size:16px; cursor:pointer;}
-    </style>
-</head>
-<body>
-    <div class="login-box">
-        <h2>Zadej přezdívku</h2>
-        <form action="/login" method="post">
-            <input type="text" name="nickname" placeholder="Tvoje jméno" required>
-            <button type="submit">Hrát</button>
-        </form>
-    </div>
-</body>
-</html>
-"""
-
-
-# ================= GAME TEMPLATE =================
 
 HTML_TEMPLATE = """
 <!DOCTYPE html>
@@ -171,9 +119,8 @@ HTML_TEMPLATE = """
     <meta charset="UTF-8">
     <title>Kostky - Python Flask</title>
     <style>
-        body { font-family: 'Segoe UI'; background: #121212; color: white; display: flex; justify-content: center; padding-top: 30px; }
+        body { font-family: 'Segoe UI', sans-serif; background: #121212; color: white; display: flex; justify-content: center; padding-top: 30px; }
         .table { background: #1e3a1e; padding: 30px; border-radius: 20px; box-shadow: 0 0 50px rgba(0,0,0,0.5); width: 480px; border: 8px solid #3e2723; text-align: center; }
-        .player { font-size:14px; color:#aaa; margin-bottom:10px;}
         .die { display: inline-block; width: 55px; height: 55px; line-height: 55px; background: white; color: black; font-size: 28px; font-weight: bold; border-radius: 10px; margin: 8px; cursor: pointer; transition: 0.2s; box-shadow: 3px 3px 0 #ccc; }
         .die.selected { transform: translateY(-10px); background: #f1c40f; box-shadow: 0 5px 0 #b7950b; }
         .btn { padding: 12px 20px; font-size: 16px; border-radius: 8px; border: none; cursor: pointer; font-weight: bold; margin: 5px 0; width: 100%; }
@@ -181,31 +128,21 @@ HTML_TEMPLATE = """
         .btn-keep { background: #3498db; color: white; }
         .btn-bank { background: #e67e22; color: white; }
         .status { background: rgba(0,0,0,0.4); padding: 15px; border-radius: 10px; margin-bottom: 20px; }
-        .logout { color:#666; font-size:13px; text-decoration:none; display:block; margin-top:10px;}
     </style>
 </head>
 <body>
 <div class="table">
-
-    <div class="player">
-        Hraje: <strong>{{ player }}</strong>
-        <a href="/logout" class="logout">Změnit hráče</a>
-    </div>
-
     <div class="status">
         <div style="font-size: 14px; color: #aaa;">CELKOVÉ SKÓRE</div>
         <div style="font-size: 36px; font-weight: bold;">{{ "{:,}".format(g.total) }}</div>
         <div style="margin-top: 10px; color: #2ecc71; font-size: 18px;">V tahu: <strong>{{ g.turn }}</strong></div>
     </div>
-
     <p style="min-height: 45px; color: #f1c40f;">{{ g.msg }}</p>
-
     <div id="dice-container" style="min-height: 80px;">
         {% for val in g.current_roll %}
             <div class="die" onclick="toggleDie(this, {{ loop.index0 }})">{{ val }}</div>
         {% endfor %}
     </div>
-
     <form action="/action" method="post" id="game-form">
         <input type="hidden" name="selected_indices" id="selected_indices">
         {% if not g.current_roll %}
@@ -217,9 +154,8 @@ HTML_TEMPLATE = """
             <button type="submit" name="bank_action" class="btn btn-bank">UKONČIT KOLO A ZAPSAT</button>
         {% endif %}
     </form>
-
+    <a href="/reset" style="color: #666; font-size: 13px; text-decoration: none; display: block; margin-top: 15px;">Nová hra / Reset</a>
 </div>
-
 <script>
 let selected = [];
 function toggleDie(el, idx) {
@@ -245,7 +181,6 @@ function confirmSelection() {
 </body>
 </html>
 """
-
 
 if __name__ == '__main__':
     app.run(debug=True)

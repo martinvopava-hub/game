@@ -56,6 +56,64 @@ def kostky_page():
 def prsi_page():
     return "<h1>Prší zatím připravujeme...</h1><a href='/'>Zpět do menu</a>"
 
+
+
+
+@app.route('/prsi')
+def prsi_page():
+    return render_template_string(PRSI_TEMPLATE)
+
+# Socket události pro Prší
+@socketio.on('start_prsi')
+def handle_start_prsi():
+    init_prsi()
+    socketio.emit('update_prsi', prsi_game)
+
+@socketio.on('play_card')
+def handle_play(card):
+    # Logika vyhození karty
+    top = prsi_game['stack'][-1]
+    if card['b'] == prsi_game['current_color'] or card['h'] == top['h'] or card['h'] == 'Svršek':
+        # Odeber z ruky
+        prsi_game['player_hand'] = [c for c in prsi_game['player_hand'] if not (c['b'] == card['b'] and c['h'] == card['h'])]
+        prsi_game['stack'].append(card)
+        prsi_game['current_color'] = card['b']
+        prsi_game['msg'] = "Pěkně! Teď hraje počítač..."
+        socketio.emit('update_prsi', prsi_game)
+        
+        # Simulace tahu počítače po krátké pauze
+        eventlet.sleep(1)
+        pc_tah()
+    else:
+        prsi_game['msg'] = "Tuhle kartu nemůžeš zahrát!"
+        socketio.emit('update_prsi', prsi_game)
+
+def pc_tah():
+    top = prsi_game['stack'][-1]
+    mozne = [c for c in prsi_game['pc_hand'] if c['b'] == prsi_game['current_color'] or c['h'] == top['h'] or c['h'] == 'Svršek']
+    
+    if mozne:
+        karta = mozne[0]
+        prsi_game['pc_hand'].remove(karta)
+        prsi_game['stack'].append(karta)
+        prsi_game['current_color'] = karta['b']
+        prsi_game['msg'] = f"Počítač zahrál {karta['h']} {karta['b']}. Jsi na řadě."
+    else:
+        if prsi_game['deck']:
+            prsi_game['pc_hand'].append(prsi_game['deck'].pop())
+            prsi_game['msg'] = "Počítač si lízl. Jsi na řadě."
+            
+    socketio.emit('update_prsi', prsi_game)
+
+@socketio.on('draw_card')
+def handle_draw():
+    if prsi_game['deck']:
+        prsi_game['player_hand'].append(prsi_game['deck'].pop())
+        prsi_game['msg'] = "Lízl sis kartu. Hraje počítač..."
+        socketio.emit('update_prsi', prsi_game)
+        eventlet.sleep(1)
+        pc_tah()
+
 # --- SOCKET.IO LOGIKA (KOSTKY) ---
 
 @socketio.on('join_game')
@@ -148,6 +206,58 @@ def handle_disc():
     game['players'] = [p for p in game['players'] if p['id'] != request.sid]
     if not game['players']: handle_reset()
     socketio.emit('update', game)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    # --- GLOBÁLNÍ STAV HRY PRŠÍ ---
+prsi_game = {
+    'deck': [],
+    'player_hand': [],
+    'pc_hand': [],
+    'stack': [],  # Odhazovací balíček
+    'current_color': None,
+    'turn': 'player', # 'player' nebo 'pc'
+    'msg': 'Hra začíná! Jsi na řadě.'
+}
+
+def init_prsi():
+    barvy = ['Srdce', 'Kule', 'Zelené', 'Žaludy']
+    hodnoty = ['7', '8', '9', '10', 'Spodek', 'Svršek', 'Král', 'Eso']
+    deck = [{'b': b, 'h': h} for b in barvy for h in hodnoty]
+    random.shuffle(deck)
+    
+    prsi_game['player_hand'] = [deck.pop() for _ in range(4)]
+    prsi_game['pc_hand'] = [deck.pop() for _ in range(4)]
+    start_card = deck.pop()
+    prsi_game['stack'] = [start_card]
+    prsi_game['current_color'] = start_card['b']
+    prsi_game['deck'] = deck
+    prsi_game['turn'] = 'player'
+    prsi_game['msg'] = 'Tvoje řada. Hraj kartu nebo lízni.'
+
+
+
+
+
+
+
+
+
+
 
 # --- HTML ŠABLONY ---
 
@@ -284,6 +394,99 @@ KOSTKY_TEMPLATE = """
             });
         });
         socket.on('reload', () => location.reload());
+    </script>
+</body>
+</html>
+"""
+
+
+#prší
+
+
+
+PRSI_TEMPLATE = """
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Prší Online</title>
+    <style>
+        body { font-family: 'Segoe UI', sans-serif; background: #063d12; color: white; text-align: center; margin: 0; }
+        .table { height: 100vh; display: flex; flex-direction: column; justify-content: space-between; padding: 20px; }
+        .hand { display: flex; justify-content: center; gap: 10px; min-height: 150px; }
+        .card { 
+            width: 100px; height: 150px; background: white; color: black; 
+            border-radius: 10px; border: 2px solid #000; display: flex; 
+            flex-direction: column; justify-content: center; font-weight: bold;
+            cursor: pointer; transition: 0.2s; position: relative;
+        }
+        .card:hover { transform: translateY(-20px); box-shadow: 0 10px 20px rgba(0,0,0,0.5); }
+        .card.Srdce, .card.Kule { color: red; }
+        .center-pile { display: flex; justify-content: center; gap: 50px; align-items: center; }
+        .deck-back { width: 100px; height: 150px; background: #800; border: 4px solid white; border-radius: 10px; cursor: pointer; }
+        .status { font-size: 24px; color: #f1c40f; margin: 20px; }
+        .back-link { position: absolute; top: 20px; left: 20px; color: white; text-decoration: none; opacity: 0.7; }
+    </style>
+</head>
+<body>
+    <div class="table">
+        <a href="/" class="back-link">← Menu</a>
+        
+        <div class="hand" id="pc-hand">
+            </div>
+
+        <div class="center-pile">
+            <div class="deck-back" onclick="liznout()"></div>
+            <div id="stack-card"></div>
+        </div>
+
+        <div>
+            <div class="status" id="status-msg">Načítání...</div>
+            <div class="hand" id="player-hand"></div>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    <script>
+        const socket = io();
+        
+        // Funkce pro zobrazení karet
+        function renderCard(card, isPlayer) {
+            const div = document.createElement('div');
+            div.className = `card ${card.b}`;
+            div.innerHTML = `<div>${card.h}</div><div>${card.b}</div>`;
+            if(isPlayer) div.onclick = () => socket.emit('play_card', card);
+            return div;
+        }
+
+        socket.on('update_prsi', (g) => {
+            document.getElementById('status-msg').innerText = g.msg;
+            
+            // Stack (to co je na stole)
+            const stack = document.getElementById('stack-card');
+            stack.innerHTML = '';
+            stack.appendChild(renderCard(g.stack[g.stack.length - 1], false));
+
+            // Hráčova ruka
+            const pHand = document.getElementById('player-hand');
+            pHand.innerHTML = '';
+            g.player_hand.forEach(c => pHand.appendChild(renderCard(c, true)));
+
+            // PC ruka (jen zadní strany)
+            const pcHand = document.getElementById('pc-hand');
+            pcHand.innerHTML = '';
+            g.pc_hand.forEach(() => {
+                const back = document.createElement('div');
+                back.className = 'card';
+                back.style.background = '#800';
+                pcHand.appendChild(back);
+            });
+        });
+
+        function liznout() { socket.emit('draw_card'); }
+        
+        // Spustit hru při načtení
+        socket.emit('start_prsi');
     </script>
 </body>
 </html>

@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+    <meta charset="UTF-8">
+    <title>Multiplayer Herna</title>
+    <style>
+        body { font-family: sans-serif; background: #0f0f0f; color: white; text-align: center; }
+        .box { display: flex; justify-content: center; gap: 20px; margin-top: 50px; }
+        .game-card { 
+            padding: 30px; border: 2px solid #444; border-radius: 15px; 
+            text-decoration: none; color: white; background: #1a1a1a;
+            transition: 0.3s; width: 150px;
+        }
+        .game-card:hover { border-color: #2ecc71; transform: scale(1.05); }
+    </style>
+</head>
+<body>
+    <h1>Vyber si hru</h1>
+    <div class="box">
+        <a href="/kostky" class="game-card">
+            <h2>🎲 Kostky</h2>
+            <p>Multiplayer bitva</p>
+        </a>
+        <a href="/prsi" class="game-card">
+            <h2>🃏 Prší</h2>
+            <p>Klasické karty</p>
+        </a>
+    </div>
+</body>
+</html>

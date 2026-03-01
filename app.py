@@ -1,9 +1,3 @@
-
-
-
-
-
-
 import eventlet
 eventlet.monkey_patch()
 
@@ -14,9 +8,10 @@ from flask_socketio import SocketIO, emit
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'kostky-live-sync-2026'
+# Důležité pro Render: cors_allowed_origins="*"
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
 
-# --- GLOBÁLNÍ STAV HRY ---
+# --- GLOBÁLNÍ STAV HRY KOSTKY ---
 game = {
     'players': [],       
     'scores': {},        
@@ -24,7 +19,7 @@ game = {
     'current_turn_pts': 0,
     'dice_count': 6,
     'current_roll': [],
-    'selected_indices': [], # Kostky, na které hráč PRÁVĚ kliká
+    'selected_indices': [],
     'msg': 'Čeká se na hráče...',
     'winner': None,
     'finisher_sid': None 
@@ -45,9 +40,23 @@ def vypocitej_body(vyber):
         else: return 0
     return body
 
+# --- ROUTY (MENU A HRY) ---
+
 @app.route('/')
-def index():
-    return render_template_string(HTML_TEMPLATE)
+def menu():
+    # Hlavní rozcestník her
+    return render_template_string(MENU_TEMPLATE)
+
+@app.route('/kostky')
+def kostky_page():
+    # Stránka s tvou hrou kostky
+    return render_template_string(KOSTKY_TEMPLATE)
+
+@app.route('/prsi')
+def prsi_page():
+    return "<h1>Prší zatím připravujeme...</h1><a href='/'>Zpět do menu</a>"
+
+# --- SOCKET.IO LOGIKA (KOSTKY) ---
 
 @socketio.on('join_game')
 def handle_join(data):
@@ -60,8 +69,9 @@ def handle_join(data):
     socketio.emit('update', game)
 
 def next_turn():
+    if not game['players']: return
     game['turn_index'] = (game['turn_index'] + 1) % len(game['players'])
-    game['selected_indices'] = [] # Reset výběru pro dalšího
+    game['selected_indices'] = []
     if game['finisher_sid'] and game['players'][game['turn_index']]['id'] == game['finisher_sid']:
         best_sid = max(game['scores'], key=game['scores'].get)
         winner_name = next(p['name'] for p in game['players'] if p['id'] == best_sid)
@@ -89,7 +99,6 @@ def handle_roll():
 @socketio.on('select_die')
 def handle_select(data):
     sid = request.sid
-    # Pouze hráč na řadě může měnit výběr
     if not game['players'] or game['players'][game['turn_index']]['id'] != sid: return
     idx = data.get('index')
     if idx in game['selected_indices']:
@@ -140,8 +149,45 @@ def handle_disc():
     if not game['players']: handle_reset()
     socketio.emit('update', game)
 
-# --- HTML ---
-HTML_TEMPLATE = """
+# --- HTML ŠABLONY ---
+
+MENU_TEMPLATE = """
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Multiplayer Herní Centrum</title>
+    <style>
+        body { font-family: 'Segoe UI', sans-serif; background: #0f0f0f; color: white; text-align: center; padding-top: 50px; }
+        .container { display: flex; justify-content: center; gap: 20px; margin-top: 30px; }
+        .card { 
+            background: #1a1a1a; border: 2px solid #444; padding: 20px; width: 200px; 
+            border-radius: 15px; text-decoration: none; color: white; transition: 0.3s;
+        }
+        .card:hover { border-color: #2ecc71; transform: translateY(-5px); background: #222; }
+        h1 { color: #f1c40f; }
+    </style>
+</head>
+<body>
+    <h1>Vyber si hru</h1>
+    <div class="container">
+        <a href="/kostky" class="card">
+            <div style="font-size: 50px;">🎲</div>
+            <h2>Kostky</h2>
+            <p>Live multiplayer bitva</p>
+        </a>
+        <a href="/prsi" class="card">
+            <div style="font-size: 50px;">🃏</div>
+            <h2>Prší</h2>
+            <p>Klasické karty</p>
+        </a>
+    </div>
+</body>
+</html>
+"""
+
+# Zde je tvůj původní HTML kód pro kostky
+KOSTKY_TEMPLATE = """
 <!DOCTYPE html>
 <html>
 <head>
@@ -167,9 +213,11 @@ HTML_TEMPLATE = """
         .btn-bank { background: #e67e22; color: white; }
         .btn:disabled { display: none; }
         input { padding: 12px; font-size: 18px; border-radius: 8px; margin-bottom: 10px; width: 250px; }
+        .back-link { display: block; margin-bottom: 20px; color: #888; text-decoration: none; }
     </style>
 </head>
 <body>
+    <a href="/" class="back-link">← Zpět do menu</a>
     <div id="login">
         <h1>🎲 Kostky Arena</h1>
         <input type="text" id="nick" placeholder="Tvé jméno..." maxlength="12">
@@ -177,7 +225,7 @@ HTML_TEMPLATE = """
     </div>
     <h2 id="global-msg" style="text-align:center; color:#f1c40f; min-height: 35px;"></h2>
     <div id="arena" class="arena"></div>
-    <div style="text-align:center; margin-top:40px;"><button onclick="socket.emit('reset_game')" style="color:#444; background:none; border:none; cursor:pointer;">Restartovat</button></div>
+    <div style="text-align:center; margin-top:40px;"><button onclick="socket.emit('reset_game')" style="color:#444; background:none; border:none; cursor:pointer;">Restartovat hru</button></div>
 
     <script>
         const socket = io();
@@ -226,7 +274,6 @@ HTML_TEMPLATE = """
                     const dBox = card.querySelector('#dice-box');
                     g.current_roll.forEach((val, i) => {
                         const d = document.createElement('div');
-                        // Tady se kostka označí, i když kliká někdo jiný!
                         const isSelected = g.selected_indices.includes(i);
                         d.className = 'die' + (isSelected ? ' selected' : '');
                         d.innerText = val;
@@ -243,5 +290,6 @@ HTML_TEMPLATE = """
 """
 
 if __name__ == '__main__':
+    # Nastavení pro Render
     port = int(os.environ.get("PORT", 5000))
     socketio.run(app, host='0.0.0.0', port=port)

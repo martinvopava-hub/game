@@ -4,20 +4,21 @@ import random
 app = Flask(__name__)
 app.secret_key = 'tajny_klic_pro_session'
 
+WIN_SCORE = 5000
+
 
 def vypocitej_vyber(vyber):
     if not vyber:
         return 0
-    
+
     counts = {}
     for x in vyber:
         counts[x] = counts.get(x, 0) + 1
-    
-    body = 0
 
     if len(counts) == 6:
         return 2000
 
+    body = 0
     for num, count in counts.items():
         if num == 1:
             if count < 3:
@@ -37,52 +38,45 @@ def vypocitej_vyber(vyber):
     return body
 
 
-@app.route('/')
+@app.route('/', methods=['GET'])
 def index():
-    if 'player' not in session:
-        return render_template_string(LOGIN_TEMPLATE)
+    if 'players' not in session:
+        return render_template_string(SETUP_TEMPLATE)
 
-    if 'game' not in session:
+    return render_template_string(GAME_TEMPLATE,
+                                  players=session['players'],
+                                  current=session['current_player'],
+                                  game=session['game'],
+                                  win_score=WIN_SCORE)
+
+
+@app.route('/setup', methods=['POST'])
+def setup():
+    names = request.form.get('players')
+    if names:
+        player_list = [n.strip() for n in names.split(',') if n.strip()]
+        session['players'] = [{'name': n, 'score': 0} for n in player_list]
+        session['current_player'] = 0
         session['game'] = {
-            'total': 0, 'turn': 0, 'dice_count': 6,
-            'current_roll': [], 'msg': 'Hra připravena. Hoďte si!'
+            'turn': 0,
+            'dice_count': 6,
+            'current_roll': [],
+            'msg': 'Hra připravena. Hoďte si!'
         }
-
-    return render_template_string(HTML_TEMPLATE, g=session['game'], player=session['player'])
-
-
-@app.route('/login', methods=['POST'])
-def login():
-    nickname = request.form.get('nickname')
-    if nickname:
-        session['player'] = nickname
-    return redirect(url_for('index'))
-
-
-@app.route('/logout')
-def logout():
-    session.pop('player', None)
-    session.pop('game', None)
-    return redirect(url_for('index'))
-
-
-@app.route('/reset')
-def reset():
-    session.pop('game', None)
     return redirect(url_for('index'))
 
 
 @app.route('/action', methods=['POST'])
 def action():
-    g = session.get('game')
-    if not g:
-        return redirect(url_for('index'))
+    game = session['game']
+    players = session['players']
+    current = session['current_player']
 
     if 'roll_action' in request.form:
-        g['current_roll'] = [random.randint(1, 6) for _ in range(g['dice_count'])]
+        game['current_roll'] = [random.randint(1, 6) for _ in range(game['dice_count'])]
 
         test_counts = {}
-        for x in g['current_roll']:
+        for x in game['current_roll']:
             test_counts[x] = test_counts.get(x, 0) + 1
 
         mozne_body = 0
@@ -91,65 +85,80 @@ def action():
                 mozne_body += 1
 
         if mozne_body == 0:
-            g['msg'] = f"❌ NULA! Nic nepadlo. Ztrácíte {g['turn']} bodů."
-            g['turn'] = 0
-            g['dice_count'] = 6
-            g['current_roll'] = []
+            game['msg'] = f"❌ NULA! {players[current]['name']} ztrácí {game['turn']} bodů."
+            game['turn'] = 0
+            game['dice_count'] = 6
+            game['current_roll'] = []
+            session['current_player'] = (current + 1) % len(players)
         else:
-            g['msg'] = "Vyberte bodované kostky."
+            game['msg'] = "Vyberte bodované kostky."
 
     elif 'keep_action' in request.form:
         indices_str = request.form.get('selected_indices', '')
         if indices_str:
             indices = [int(i) for i in indices_str.split(',')]
-            selected_values = [g['current_roll'][i] for i in indices]
+            selected_values = [game['current_roll'][i] for i in indices]
 
             points = vypocitej_vyber(selected_values)
             if points > 0:
-                g['turn'] += points
-                g['dice_count'] -= len(selected_values)
-                if g['dice_count'] == 0:
-                    g['dice_count'] = 6
-                g['current_roll'] = []
-                g['msg'] = f"Získáno {points} bodů. Celkem v tahu: {g['turn']}."
+                game['turn'] += points
+                game['dice_count'] -= len(selected_values)
+                if game['dice_count'] == 0:
+                    game['dice_count'] = 6
+                game['current_roll'] = []
+                game['msg'] = f"Získáno {points} bodů."
             else:
-                g['msg'] = "⚠️ Neplatný výběr kombinace!"
+                game['msg'] = "⚠️ Neplatný výběr!"
 
     elif 'bank_action' in request.form:
-        if g['turn'] >= 350:
-            g['total'] += g['turn']
-            g['msg'] = f"💰 Zapsáno {g['turn']} bodů."
-            g['turn'] = 0
-            g['dice_count'] = 6
-            g['current_roll'] = []
-        else:
-            g['msg'] = "⚠️ Pro zápis musíte mít aspoň 350 bodů!"
+        if game['turn'] >= 350:
+            players[current]['score'] += game['turn']
 
-    session['game'] = g
+            if players[current]['score'] >= WIN_SCORE:
+                game['msg'] = f"🏆 {players[current]['name']} vyhrál hru!"
+            else:
+                game['msg'] = f"{players[current]['name']} zapsal {game['turn']} bodů."
+                session['current_player'] = (current + 1) % len(players)
+
+            game['turn'] = 0
+            game['dice_count'] = 6
+            game['current_roll'] = []
+        else:
+            game['msg'] = "⚠️ Potřebujete alespoň 350 bodů."
+
+    session['game'] = game
+    session['players'] = players
+
     return redirect(url_for('index'))
 
 
-# ================= LOGIN =================
+@app.route('/reset')
+def reset():
+    session.clear()
+    return redirect(url_for('index'))
 
-LOGIN_TEMPLATE = """
+
+# ================= SETUP =================
+
+SETUP_TEMPLATE = """
 <!DOCTYPE html>
-<html lang="cs">
+<html>
 <head>
 <meta charset="UTF-8">
-<title>Přihlášení hráče</title>
+<title>Nastavení hráčů</title>
 <style>
-body { font-family: 'Segoe UI'; background:#121212; color:white; display:flex; justify-content:center; align-items:center; height:100vh;}
-.login-box { background:#1e3a1e; padding:40px; border-radius:20px; width:350px; text-align:center;}
-input { width:100%; padding:12px; border-radius:8px; border:none; margin-top:15px; font-size:16px;}
-button { margin-top:20px; padding:12px; width:100%; border:none; border-radius:8px; background:#2ecc71; color:white; font-weight:bold; font-size:16px; cursor:pointer;}
+body {font-family:Segoe UI;background:#121212;color:white;display:flex;justify-content:center;align-items:center;height:100vh;}
+.box {background:#1e3a1e;padding:40px;border-radius:20px;width:400px;text-align:center;}
+input {width:100%;padding:12px;border-radius:8px;border:none;margin-top:15px;}
+button {margin-top:20px;padding:12px;width:100%;border:none;border-radius:8px;background:#2ecc71;color:white;font-weight:bold;}
 </style>
 </head>
 <body>
-<div class="login-box">
-<h2>Zadej přezdívku</h2>
-<form action="/login" method="post">
-<input type="text" name="nickname" placeholder="Tvoje jméno" required>
-<button type="submit">Hrát</button>
+<div class="box">
+<h2>Zadej hráče (oddělené čárkou)</h2>
+<form action="/setup" method="post">
+<input type="text" name="players" placeholder="Např: Petr, Jana, Karel" required>
+<button type="submit">Spustit hru</button>
 </form>
 </div>
 </body>
@@ -159,65 +168,61 @@ button { margin-top:20px; padding:12px; width:100%; border:none; border-radius:8
 
 # ================= GAME =================
 
-HTML_TEMPLATE = """
+GAME_TEMPLATE = """
 <!DOCTYPE html>
-<html lang="cs">
+<html>
 <head>
 <meta charset="UTF-8">
-<title>Kostky - Python Flask</title>
+<title>Multiplayer Kostky</title>
 <style>
-body { font-family: 'Segoe UI'; background: #121212; color: white; display: flex; justify-content: center; padding-top: 30px; }
-.table { background: #1e3a1e; padding: 30px; border-radius: 20px; box-shadow: 0 0 50px rgba(0,0,0,0.5); width: 480px; border: 8px solid #3e2723; text-align: center; }
-.player { font-size:14px; color:#aaa; margin-bottom:10px;}
-.die { display: inline-block; width: 55px; height: 55px; line-height: 55px; background: white; color: black; font-size: 28px; font-weight: bold; border-radius: 10px; margin: 8px; cursor: pointer; transition: 0.2s; box-shadow: 3px 3px 0 #ccc; }
-.die.selected { transform: translateY(-10px); background: #f1c40f; box-shadow: 0 5px 0 #b7950b; }
-.btn { padding: 12px 20px; font-size: 16px; border-radius: 8px; border: none; cursor: pointer; font-weight: bold; margin: 5px 0; width: 100%; }
-.btn-roll { background: #2ecc71; color: white; }
-.btn-keep { background: #3498db; color: white; }
-.btn-bank { background: #e67e22; color: white; }
-.btn-danger { background:#c0392b; color:white;}
-.btn-gray { background:#555; color:white;}
-.status { background: rgba(0,0,0,0.4); padding: 15px; border-radius: 10px; margin-bottom: 20px; }
-.bottom-buttons { margin-top:20px; }
+body {font-family:Segoe UI;background:#121212;color:white;display:flex;justify-content:center;padding-top:30px;}
+.table {background:#1e3a1e;padding:30px;border-radius:20px;width:500px;text-align:center;}
+.die {display:inline-block;width:55px;height:55px;line-height:55px;background:white;color:black;font-size:28px;border-radius:10px;margin:8px;cursor:pointer;}
+.die.selected {background:#f1c40f;}
+.btn {padding:12px;width:100%;margin-top:5px;border:none;border-radius:8px;font-weight:bold;}
+.roll {background:#2ecc71;color:white;}
+.bank {background:#e67e22;color:white;}
+.scoreboard {margin-bottom:15px;text-align:left;}
+.active {color:#2ecc71;font-weight:bold;}
 </style>
 </head>
 <body>
 <div class="table">
 
-<div class="player">
-Hraje: <strong>{{ player }}</strong>
+<h3>Hraje: {{ players[current].name }}</h3>
+
+<div class="scoreboard">
+{% for p in players %}
+<div class="{% if loop.index0 == current %}active{% endif %}">
+{{ p.name }}: {{ p.score }}
+</div>
+{% endfor %}
 </div>
 
-<div class="status">
-<div style="font-size: 14px; color: #aaa;">CELKOVÉ SKÓRE</div>
-<div style="font-size: 36px; font-weight: bold;">{{ "{:,}".format(g.total) }}</div>
-<div style="margin-top: 10px; color: #2ecc71; font-size: 18px;">V tahu: <strong>{{ g.turn }}</strong></div>
-</div>
+<p>{{ game.msg }}</p>
 
-<p style="min-height: 45px; color: #f1c40f;">{{ g.msg }}</p>
-
-<div id="dice-container" style="min-height: 80px;">
-{% for val in g.current_roll %}
+<div>
+{% for val in game.current_roll %}
 <div class="die" onclick="toggleDie(this, {{ loop.index0 }})">{{ val }}</div>
 {% endfor %}
 </div>
 
-<form action="/action" method="post" id="game-form">
+<form method="post" action="/action" id="game-form">
 <input type="hidden" name="selected_indices" id="selected_indices">
-{% if not g.current_roll %}
-<button type="submit" name="roll_action" class="btn btn-roll">HODIT KOSTKAMI ({{ g.dice_count }})</button>
+
+{% if not game.current_roll %}
+<button name="roll_action" class="btn roll">HODIT ({{ game.dice_count }})</button>
 {% else %}
-<button type="button" onclick="confirmSelection()" class="btn btn-keep">POTVRDIT VÝBĚR</button>
+<button type="button" onclick="confirmSelection()" class="btn roll">POTVRDIT VÝBĚR</button>
 {% endif %}
-{% if g.turn > 0 %}
-<button type="submit" name="bank_action" class="btn btn-bank">UKONČIT KOLO A ZAPSAT</button>
+
+{% if game.turn > 0 %}
+<button name="bank_action" class="btn bank">ZAPSAT BODY ({{ game.turn }})</button>
 {% endif %}
 </form>
 
-<div class="bottom-buttons">
-<a href="/reset"><button class="btn btn-gray">🔄 Restart hry</button></a>
-<a href="/logout"><button class="btn btn-danger">🚪 Odhlásit</button></a>
-</div>
+<br>
+<a href="/reset" style="color:#aaa;">Restart celé hry</a>
 
 </div>
 
@@ -232,13 +237,11 @@ selected.push(idx);
 }
 }
 function confirmSelection() {
-if (selected.length === 0) {
-alert("Musíte vybrat aspoň jednu kostku!");
-return;
-}
+if (selected.length === 0) { alert("Vyber kostky!"); return; }
 document.getElementById('selected_indices').value = selected.join(',');
 let input = document.createElement("input");
-input.type = "hidden"; input.name = "keep_action";
+input.type = "hidden";
+input.name = "keep_action";
 document.getElementById('game-form').appendChild(input);
 document.getElementById('game-form').submit();
 }

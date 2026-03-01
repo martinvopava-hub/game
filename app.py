@@ -3,26 +3,25 @@ eventlet.monkey_patch()
 
 import os
 import random
-from flask import Flask, render_template_string, request
+from flask import Flask, render_template, request
 from flask_socketio import SocketIO, emit
 
 app = Flask(__name__)
-app.config['SECRET_KEY'] = 'kostky-live-sync-2026'
-# Důležité pro Render: cors_allowed_origins="*"
+app.config['SECRET_KEY'] = 'herni-server-2026'
+# Důležité: cors_allowed_origins="*" povolí připojení z adresy Renderu
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
 
-# --- GLOBÁLNÍ STAV HRY KOSTKY ---
+# --- STAV HRY KOSTKY ---
 game = {
-    'players': [],       
-    'scores': {},        
-    'turn_index': 0,     
+    'players': [], 
+    'scores': {}, 
+    'turn_index': 0, 
     'current_turn_pts': 0,
     'dice_count': 6,
     'current_roll': [],
     'selected_indices': [],
     'msg': 'Čeká se na hráče...',
-    'winner': None,
-    'finisher_sid': None 
+    'winner': None
 }
 
 def vypocitej_body(vyber):
@@ -40,82 +39,16 @@ def vypocitej_body(vyber):
         else: return 0
     return body
 
-# --- ROUTY (MENU A HRY) ---
-
+# --- ROUTY ---
 @app.route('/')
 def menu():
-    # Hlavní rozcestník her
-    return render_template_string(MENU_TEMPLATE)
+    return render_template('index.html')
 
 @app.route('/kostky')
-def kostky_page():
-    # Stránka s tvou hrou kostky
-    return render_template_string(KOSTKY_TEMPLATE)
+def kostky():
+    return render_template('kostky.html')
 
-@app.route('/prsi')
-def prsi_page():
-    return "<h1>Prší zatím připravujeme...</h1><a href='/'>Zpět do menu</a>"
-
-
-
-
-@app.route('/prsi')
-def prsi_page():
-    return render_template_string(PRSI_TEMPLATE)
-
-# Socket události pro Prší
-@socketio.on('start_prsi')
-def handle_start_prsi():
-    init_prsi()
-    socketio.emit('update_prsi', prsi_game)
-
-@socketio.on('play_card')
-def handle_play(card):
-    # Logika vyhození karty
-    top = prsi_game['stack'][-1]
-    if card['b'] == prsi_game['current_color'] or card['h'] == top['h'] or card['h'] == 'Svršek':
-        # Odeber z ruky
-        prsi_game['player_hand'] = [c for c in prsi_game['player_hand'] if not (c['b'] == card['b'] and c['h'] == card['h'])]
-        prsi_game['stack'].append(card)
-        prsi_game['current_color'] = card['b']
-        prsi_game['msg'] = "Pěkně! Teď hraje počítač..."
-        socketio.emit('update_prsi', prsi_game)
-        
-        # Simulace tahu počítače po krátké pauze
-        eventlet.sleep(1)
-        pc_tah()
-    else:
-        prsi_game['msg'] = "Tuhle kartu nemůžeš zahrát!"
-        socketio.emit('update_prsi', prsi_game)
-
-def pc_tah():
-    top = prsi_game['stack'][-1]
-    mozne = [c for c in prsi_game['pc_hand'] if c['b'] == prsi_game['current_color'] or c['h'] == top['h'] or c['h'] == 'Svršek']
-    
-    if mozne:
-        karta = mozne[0]
-        prsi_game['pc_hand'].remove(karta)
-        prsi_game['stack'].append(karta)
-        prsi_game['current_color'] = karta['b']
-        prsi_game['msg'] = f"Počítač zahrál {karta['h']} {karta['b']}. Jsi na řadě."
-    else:
-        if prsi_game['deck']:
-            prsi_game['pc_hand'].append(prsi_game['deck'].pop())
-            prsi_game['msg'] = "Počítač si lízl. Jsi na řadě."
-            
-    socketio.emit('update_prsi', prsi_game)
-
-@socketio.on('draw_card')
-def handle_draw():
-    if prsi_game['deck']:
-        prsi_game['player_hand'].append(prsi_game['deck'].pop())
-        prsi_game['msg'] = "Lízl sis kartu. Hraje počítač..."
-        socketio.emit('update_prsi', prsi_game)
-        eventlet.sleep(1)
-        pc_tah()
-
-# --- SOCKET.IO LOGIKA (KOSTKY) ---
-
+# --- SOCKET.IO KOSTKY ---
 @socketio.on('join_game')
 def handle_join(data):
     sid = request.sid
@@ -123,41 +56,28 @@ def handle_join(data):
     if not any(p['id'] == sid for p in game['players']):
         game['players'].append({'id': sid, 'name': name})
         game['scores'][sid] = 0
-        game['msg'] = f"Připojen {name}."
     socketio.emit('update', game)
-
-def next_turn():
-    if not game['players']: return
-    game['turn_index'] = (game['turn_index'] + 1) % len(game['players'])
-    game['selected_indices'] = []
-    if game['finisher_sid'] and game['players'][game['turn_index']]['id'] == game['finisher_sid']:
-        best_sid = max(game['scores'], key=game['scores'].get)
-        winner_name = next(p['name'] for p in game['players'] if p['id'] == best_sid)
-        game['winner'] = winner_name
-        game['msg'] = f"🏆 VÍTĚZ: {winner_name}!"
-    else:
-        game['msg'] = f"Na řadě je {game['players'][game['turn_index']]['name']}."
 
 @socketio.on('roll_dice')
 def handle_roll():
     sid = request.sid
-    if not game['players'] or game['players'][game['turn_index']]['id'] != sid or game['winner']: return
+    if not game['players'] or game['players'][game['turn_index']]['id'] != sid: return
     game['selected_indices'] = []
     game['current_roll'] = [random.randint(1, 6) for _ in range(game['dice_count'])]
+    
+    # Kontrola nuly
     c = {x: game['current_roll'].count(x) for x in set(game['current_roll'])}
-    mozne = any(n in [1, 5] or cnt >= 3 for n, cnt in c.items()) or len(c) == 6
-    if not mozne:
-        game['msg'] = "❌ NULA!"
+    možné = any(n in [1, 5] or cnt >= 3 for n, cnt in c.items()) or len(c) == 6
+    if not možné:
+        game['msg'] = f"❌ {game['players'][game['turn_index']]['name']} hodil NULU!"
         game['current_turn_pts'] = 0
         game['dice_count'] = 6
         game['current_roll'] = []
-        next_turn()
+        game['turn_index'] = (game['turn_index'] + 1) % len(game['players'])
     socketio.emit('update', game)
 
 @socketio.on('select_die')
 def handle_select(data):
-    sid = request.sid
-    if not game['players'] or game['players'][game['turn_index']]['id'] != sid: return
     idx = data.get('index')
     if idx in game['selected_indices']:
         game['selected_indices'].remove(idx)
@@ -169,330 +89,34 @@ def handle_select(data):
 def handle_keep():
     sid = request.sid
     if not game['players'] or game['players'][game['turn_index']]['id'] != sid: return
-    selected_vals = [game['current_roll'][i] for i in game['selected_indices']]
-    pts = vypocitej_body(selected_vals)
-    if pts > 0:
-        game['current_turn_pts'] += pts
+    vyber = [game['current_roll'][i] for i in game['selected_indices']]
+    body = vypocitej_body(vyber)
+    if body > 0:
+        game['current_turn_pts'] += body
         game['dice_count'] -= len(game['selected_indices'])
         if game['dice_count'] == 0: game['dice_count'] = 6
         game['current_roll'] = []
         game['selected_indices'] = []
-    else:
-        game['msg'] = "⚠️ Neplatná kombinace!"
+        game['msg'] = f"Zatím nahráno {game['current_turn_pts']} bodů."
     socketio.emit('update', game)
 
 @socketio.on('bank_points')
 def handle_bank():
     sid = request.sid
-    if not game['players'] or game['players'][game['turn_index']]['id'] != sid: return
-    if game['current_turn_pts'] >= 350:
-        game['scores'][sid] += game['current_turn_pts']
-        if game['scores'][sid] >= 10000 and game['finisher_sid'] is None:
-            game['finisher_sid'] = sid
-        game['current_turn_pts'] = 0
-        game['dice_count'] = 6
-        game['current_roll'] = []
-        next_turn()
+    if game['current_turn_pts'] < 350: return
+    game['scores'][sid] += game['current_turn_pts']
+    game['current_turn_pts'] = 0
+    game['dice_count'] = 6
+    game['current_roll'] = []
+    game['turn_index'] = (game['turn_index'] + 1) % len(game['players'])
     socketio.emit('update', game)
 
 @socketio.on('reset_game')
 def handle_reset():
     global game
-    game = {'players': [], 'scores': {}, 'turn_index': 0, 'current_turn_pts': 0, 'dice_count': 6, 'current_roll': [], 'selected_indices': [], 'msg': 'Restart.', 'winner': None, 'finisher_sid': None}
+    game = {'players': [], 'scores': {}, 'turn_index': 0, 'current_turn_pts': 0, 'dice_count': 6, 'current_roll': [], 'selected_indices': [], 'msg': 'Hra restartována.', 'winner': None}
     socketio.emit('reload')
 
-@socketio.on('disconnect')
-def handle_disc():
-    game['players'] = [p for p in game['players'] if p['id'] != request.sid]
-    if not game['players']: handle_reset()
-    socketio.emit('update', game)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-    # --- GLOBÁLNÍ STAV HRY PRŠÍ ---
-prsi_game = {
-    'deck': [],
-    'player_hand': [],
-    'pc_hand': [],
-    'stack': [],  # Odhazovací balíček
-    'current_color': None,
-    'turn': 'player', # 'player' nebo 'pc'
-    'msg': 'Hra začíná! Jsi na řadě.'
-}
-
-def init_prsi():
-    barvy = ['Srdce', 'Kule', 'Zelené', 'Žaludy']
-    hodnoty = ['7', '8', '9', '10', 'Spodek', 'Svršek', 'Král', 'Eso']
-    deck = [{'b': b, 'h': h} for b in barvy for h in hodnoty]
-    random.shuffle(deck)
-    
-    prsi_game['player_hand'] = [deck.pop() for _ in range(4)]
-    prsi_game['pc_hand'] = [deck.pop() for _ in range(4)]
-    start_card = deck.pop()
-    prsi_game['stack'] = [start_card]
-    prsi_game['current_color'] = start_card['b']
-    prsi_game['deck'] = deck
-    prsi_game['turn'] = 'player'
-    prsi_game['msg'] = 'Tvoje řada. Hraj kartu nebo lízni.'
-
-
-
-
-
-
-
-
-
-
-
-# --- HTML ŠABLONY ---
-
-MENU_TEMPLATE = """
-<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="UTF-8">
-    <title>Multiplayer Herní Centrum</title>
-    <style>
-        body { font-family: 'Segoe UI', sans-serif; background: #0f0f0f; color: white; text-align: center; padding-top: 50px; }
-        .container { display: flex; justify-content: center; gap: 20px; margin-top: 30px; }
-        .card { 
-            background: #1a1a1a; border: 2px solid #444; padding: 20px; width: 200px; 
-            border-radius: 15px; text-decoration: none; color: white; transition: 0.3s;
-        }
-        .card:hover { border-color: #2ecc71; transform: translateY(-5px); background: #222; }
-        h1 { color: #f1c40f; }
-    </style>
-</head>
-<body>
-    <h1>Vyber si hru</h1>
-    <div class="container">
-        <a href="/kostky" class="card">
-            <div style="font-size: 50px;">🎲</div>
-            <h2>Kostky</h2>
-            <p>Live multiplayer bitva</p>
-        </a>
-        <a href="/prsi" class="card">
-            <div style="font-size: 50px;">🃏</div>
-            <h2>Prší</h2>
-            <p>Klasické karty</p>
-        </a>
-    </div>
-</body>
-</html>
-"""
-
-# Zde je tvůj původní HTML kód pro kostky
-KOSTKY_TEMPLATE = """
-<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="UTF-8">
-    <title>Kostky Arena LIVE</title>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
-    <style>
-        body { font-family: 'Segoe UI', sans-serif; background: #0f0f0f; color: white; margin: 0; padding: 20px; }
-        #login { position: fixed; top:0; left:0; width:100%; height:100%; background: #111; z-index:1000; display:flex; flex-direction:column; align-items:center; justify-content:center; }
-        .arena { display: flex; flex-wrap: wrap; justify-content: center; gap: 20px; margin-top: 20px; }
-        .player-card { width: 300px; padding: 20px; border-radius: 15px; transition: 0.4s; background: #1a1a1a; border: 4px solid #444; text-align: center; }
-        .player-card.active { border-color: #2ecc71; background: #1e3a1e; box-shadow: 0 0 25px #2ecc7166; transform: scale(1.05); }
-        .player-card.inactive { border-color: #e74c3c; opacity: 0.6; filter: grayscale(0.5); }
-        .player-card.finisher { border-color: #f1c40f !important; box-shadow: 0 0 15px #f1c40f; opacity: 1; filter: none; }
-        .score-badge { font-size: 40px; font-weight: bold; margin: 10px 0; }
-        .turn-pts { font-size: 20px; color: #2ecc71; min-height: 24px; }
-        #dice-box { display: flex; justify-content: center; gap: 5px; margin: 15px 0; min-height: 55px; }
-        .die { width: 45px; height: 45px; line-height: 45px; background: white; color: black; border-radius: 8px; font-weight: bold; cursor: pointer; font-size: 22px; transition: 0.1s; }
-        .die.selected { background: #f1c40f; transform: translateY(-5px); box-shadow: 0 4px 0 #b7950b; }
-        .btn { width: 100%; padding: 12px; margin: 5px 0; border-radius: 8px; border: none; font-weight: bold; cursor: pointer; }
-        .btn-roll { background: #2ecc71; color: white; }
-        .btn-keep { background: #3498db; color: white; }
-        .btn-bank { background: #e67e22; color: white; }
-        .btn:disabled { display: none; }
-        input { padding: 12px; font-size: 18px; border-radius: 8px; margin-bottom: 10px; width: 250px; }
-        .back-link { display: block; margin-bottom: 20px; color: #888; text-decoration: none; }
-    </style>
-</head>
-<body>
-    <a href="/" class="back-link">← Zpět do menu</a>
-    <div id="login">
-        <h1>🎲 Kostky Arena</h1>
-        <input type="text" id="nick" placeholder="Tvé jméno..." maxlength="12">
-        <button class="btn btn-roll" style="width:275px" onclick="join()">VSTOUPIT</button>
-    </div>
-    <h2 id="global-msg" style="text-align:center; color:#f1c40f; min-height: 35px;"></h2>
-    <div id="arena" class="arena"></div>
-    <div style="text-align:center; margin-top:40px;"><button onclick="socket.emit('reset_game')" style="color:#444; background:none; border:none; cursor:pointer;">Restartovat hru</button></div>
-
-    <script>
-        const socket = io();
-        function join() {
-            const n = document.getElementById('nick').value;
-            if(n) { socket.emit('join_game', {name: n}); document.getElementById('login').style.display = 'none'; }
-        }
-
-        socket.on('update', (g) => {
-            document.getElementById('global-msg').innerText = g.msg;
-            const arena = document.getElementById('arena');
-            arena.innerHTML = '';
-
-            g.players.forEach((p, idx) => {
-                const isActive = idx === g.turn_index;
-                const isMe = p.id === socket.id;
-                const card = document.createElement('div');
-                card.className = `player-card ${isActive ? 'active' : 'inactive'} ${p.id === g.finisher_sid ? 'finisher' : ''}`;
-                
-                let content = `
-                    <h3>${p.name} ${isMe ? '(Ty)' : ''}</h3>
-                    <div class="score-badge">${g.scores[p.id]}</div>
-                    <div class="turn-pts">${isActive ? 'V tahu: ' + g.current_turn_pts : ''}</div>
-                    <hr style="border:0; border-top:1px solid #333; margin:15px 0;">
-                `;
-
-                if (isActive) {
-                    content += `<div id="dice-box"></div>`;
-                    if (isMe && !g.winner) {
-                        content += `
-                            <div class="controls">
-                                ${g.current_roll.length === 0 ? 
-                                    `<button class="btn btn-roll" onclick="socket.emit('roll_dice')">HODIT KOSTKAMI</button>` :
-                                    `<button class="btn btn-keep" onclick="socket.emit('keep_dice')">POTVRDIT VÝBĚR</button>`
-                                }
-                                ${g.current_turn_pts >= 350 ? `<button class="btn btn-bank" onclick="socket.emit('bank_points')">ZAPSAT BODY</button>` : ''}
-                            </div>
-                        `;
-                    }
-                }
-                if(g.winner === p.name) content += `<h2 style="color:#f1c40f">VÍTĚZ!</h2>`;
-                card.innerHTML = content;
-                arena.appendChild(card);
-
-                if (isActive && g.current_roll.length > 0) {
-                    const dBox = card.querySelector('#dice-box');
-                    g.current_roll.forEach((val, i) => {
-                        const d = document.createElement('div');
-                        const isSelected = g.selected_indices.includes(i);
-                        d.className = 'die' + (isSelected ? ' selected' : '');
-                        d.innerText = val;
-                        if (isMe && !g.winner) d.onclick = () => socket.emit('select_die', {index: i});
-                        dBox.appendChild(d);
-                    });
-                }
-            });
-        });
-        socket.on('reload', () => location.reload());
-    </script>
-</body>
-</html>
-"""
-
-
-#prší
-
-
-
-PRSI_TEMPLATE = """
-<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="UTF-8">
-    <title>Prší Online</title>
-    <style>
-        body { font-family: 'Segoe UI', sans-serif; background: #063d12; color: white; text-align: center; margin: 0; }
-        .table { height: 100vh; display: flex; flex-direction: column; justify-content: space-between; padding: 20px; }
-        .hand { display: flex; justify-content: center; gap: 10px; min-height: 150px; }
-        .card { 
-            width: 100px; height: 150px; background: white; color: black; 
-            border-radius: 10px; border: 2px solid #000; display: flex; 
-            flex-direction: column; justify-content: center; font-weight: bold;
-            cursor: pointer; transition: 0.2s; position: relative;
-        }
-        .card:hover { transform: translateY(-20px); box-shadow: 0 10px 20px rgba(0,0,0,0.5); }
-        .card.Srdce, .card.Kule { color: red; }
-        .center-pile { display: flex; justify-content: center; gap: 50px; align-items: center; }
-        .deck-back { width: 100px; height: 150px; background: #800; border: 4px solid white; border-radius: 10px; cursor: pointer; }
-        .status { font-size: 24px; color: #f1c40f; margin: 20px; }
-        .back-link { position: absolute; top: 20px; left: 20px; color: white; text-decoration: none; opacity: 0.7; }
-    </style>
-</head>
-<body>
-    <div class="table">
-        <a href="/" class="back-link">← Menu</a>
-        
-        <div class="hand" id="pc-hand">
-            </div>
-
-        <div class="center-pile">
-            <div class="deck-back" onclick="liznout()"></div>
-            <div id="stack-card"></div>
-        </div>
-
-        <div>
-            <div class="status" id="status-msg">Načítání...</div>
-            <div class="hand" id="player-hand"></div>
-        </div>
-    </div>
-
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
-    <script>
-        const socket = io();
-        
-        // Funkce pro zobrazení karet
-        function renderCard(card, isPlayer) {
-            const div = document.createElement('div');
-            div.className = `card ${card.b}`;
-            div.innerHTML = `<div>${card.h}</div><div>${card.b}</div>`;
-            if(isPlayer) div.onclick = () => socket.emit('play_card', card);
-            return div;
-        }
-
-        socket.on('update_prsi', (g) => {
-            document.getElementById('status-msg').innerText = g.msg;
-            
-            // Stack (to co je na stole)
-            const stack = document.getElementById('stack-card');
-            stack.innerHTML = '';
-            stack.appendChild(renderCard(g.stack[g.stack.length - 1], false));
-
-            // Hráčova ruka
-            const pHand = document.getElementById('player-hand');
-            pHand.innerHTML = '';
-            g.player_hand.forEach(c => pHand.appendChild(renderCard(c, true)));
-
-            // PC ruka (jen zadní strany)
-            const pcHand = document.getElementById('pc-hand');
-            pcHand.innerHTML = '';
-            g.pc_hand.forEach(() => {
-                const back = document.createElement('div');
-                back.className = 'card';
-                back.style.background = '#800';
-                pcHand.appendChild(back);
-            });
-        });
-
-        function liznout() { socket.emit('draw_card'); }
-        
-        // Spustit hru při načtení
-        socket.emit('start_prsi');
-    </script>
-</body>
-</html>
-"""
-
 if __name__ == '__main__':
-    # Nastavení pro Render
     port = int(os.environ.get("PORT", 5000))
     socketio.run(app, host='0.0.0.0', port=port)

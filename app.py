@@ -119,6 +119,7 @@ HTML_TEMPLATE = """
 <html>
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Kostky Arena 10000</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
     <style>
@@ -143,25 +144,37 @@ HTML_TEMPLATE = """
         }
 
         .score-badge { font-size: 40px; font-weight: bold; margin: 10px 0; }
-        .turn-pts { font-size: 20px; color: #2ecc71; min-height: 24px; margin-bottom: 10px; }
+        .turn-pts { font-size: 20px; color: #2ecc71; min-height: 24px; }
         
-        /* Mřížka kostek: 3 sloupce pro rozložení 3x2 */
+        /* Kontejner na kostky */
         #dice-box {
-            display: grid;
-            grid-template-columns: repeat(3, 1fr);
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
             gap: 10px;
-            justify-items: center;
             margin: 15px 0;
-            width: fit-content;
+            width: 100%;
         }
 
         .die { 
-            width: 45px; height: 45px; line-height: 45px; background: white; color: black; 
-            border-radius: 8px; font-weight: bold; cursor: pointer; font-size: 22px; 
-            display: flex; justify-content: center; align-items: center;
+            display: flex; align-items: center; justify-content: center;
+            width: 50px; height: 50px; background: white; color: black; 
+            border-radius: 8px; font-weight: bold; cursor: pointer; font-size: 24px; 
+            transition: transform 0.2s;
         }
         .die.selected { background: #f1c40f; transform: translateY(-5px); box-shadow: 0 4px 0 #b7950b; }
         
+        /* Mobilní úprava - kostky 3 a 3 (grid) */
+        @media (max-width: 480px) {
+            #dice-box {
+                display: grid;
+                grid-template-columns: repeat(3, 1fr);
+                justify-items: center;
+                gap: 15px;
+            }
+            .player-card { width: 85vw; }
+        }
+
         .controls { width: 100%; margin-top: 15px; }
         .btn { width: 100%; padding: 12px; margin: 5px 0; border-radius: 8px; border: none; font-weight: bold; cursor: pointer; }
         .btn-roll { background: #2ecc71; color: white; }
@@ -170,7 +183,6 @@ HTML_TEMPLATE = """
         .btn:disabled { display: none; }
         
         input { padding: 12px; font-size: 18px; border-radius: 8px; border: none; margin-bottom: 10px; width: 250px; }
-        hr { width: 100%; border: 0; border-top: 1px solid rgba(255,255,255,0.1); margin: 15px 0; }
     </style>
 </head>
 <body>
@@ -215,7 +227,7 @@ HTML_TEMPLATE = """
                     <h3>${p.name} ${isMe ? '(Ty)' : ''}</h3>
                     <div class="score-badge">${g.scores[p.id]}</div>
                     <div class="turn-pts">${isActive ? 'V tahu: ' + g.current_turn_pts : ''}</div>
-                    <hr>
+                    <hr style="border:0; border-top:1px solid rgba(255,255,255,0.1); width: 80%; margin:15px 0;">
                 `;
 
                 if (isActive) {

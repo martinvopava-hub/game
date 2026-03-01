@@ -1,5 +1,5 @@
 import eventlet
-eventlet.monkey_patch()  # Musí být úplně první!
+eventlet.monkey_patch()
 
 import os
 import random
@@ -7,15 +7,14 @@ from flask import Flask, render_template_string, request
 from flask_socketio import SocketIO, emit
 
 app = Flask(__name__)
-app.config['SECRET_KEY'] = 'kostky-multiplayer-2026'
-# Povolíme CORS pro bezproblémové připojení na Renderu
+app.config['SECRET_KEY'] = 'kostky-pro-kamarady-2026'
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
 
 # --- GLOBÁLNÍ STAV HRY ---
 game = {
     'players': [],       # Seznam {'id': sid, 'name': jméno}
     'scores': {},        # sid: celkové body
-    'turn_index': 0,     # Kdo je na řadě
+    'turn_index': 0,     
     'current_turn_pts': 0,
     'dice_count': 6,
     'current_roll': [],
@@ -45,45 +44,36 @@ def index():
 @socketio.on('join_game')
 def handle_join(data):
     sid = request.sid
-    name = data.get('name', 'Hráč').strip()[:15]
+    name = data.get('name', 'Hráč').strip()[:12]
     if not any(p['id'] == sid for p in game['players']):
         game['players'].append({'id': sid, 'name': name})
         game['scores'][sid] = 0
-        if len(game['players']) == 1:
-            game['msg'] = f"Vítej {name}. Čekej na soupeře..."
-        else:
-            game['msg'] = f"Hra běží! Na řadě je {game['players'][game['turn_index']]['name']}"
+        game['msg'] = f"Připojen {name}. " + (f"Na řadě je {game['players'][0]['name']}" if len(game['players']) > 1 else "Čekej na soupeře.")
     socketio.emit('update', game)
 
 @socketio.on('roll_dice')
 def handle_roll():
     sid = request.sid
-    if not game['players'] or game['players'][game['turn_index']]['id'] != sid or game['winner']:
-        return
+    if not game['players'] or game['players'][game['turn_index']]['id'] != sid or game['winner']: return
 
     game['current_roll'] = [random.randint(1, 6) for _ in range(game['dice_count'])]
-    
-    # Kontrola "smrti"
     c = {x: game['current_roll'].count(x) for x in set(game['current_roll'])}
     mozne = any(n in [1, 5] or cnt >= 3 for n, cnt in c.items()) or len(c) == 6
     
     if not mozne:
-        name = game['players'][game['turn_index']]['name']
-        game['msg'] = f"❌ NULA! {name} přichází o body."
+        game['msg'] = f"❌ NULA pro {game['players'][game['turn_index']]['name']}!"
         game['current_turn_pts'] = 0
         game['dice_count'] = 6
         game['current_roll'] = []
         game['turn_index'] = (game['turn_index'] + 1) % len(game['players'])
     else:
-        game['msg'] = "Vyber bodované kostky."
-    
+        game['msg'] = "Vyber kostky..."
     socketio.emit('update', game)
 
 @socketio.on('keep_dice')
 def handle_keep(data):
     sid = request.sid
     if not game['players'] or game['players'][game['turn_index']]['id'] != sid: return
-    
     indices = data.get('indices', [])
     selected = [game['current_roll'][i] for i in indices]
     pts = vypocitej_body(selected)
@@ -93,90 +83,95 @@ def handle_keep(data):
         game['dice_count'] -= len(selected)
         if game['dice_count'] == 0: game['dice_count'] = 6
         game['current_roll'] = []
-        game['msg'] = f"Získáno {pts} bodů. Házej dál nebo zapiš."
     else:
         game['msg'] = "⚠️ Neplatná kombinace!"
-    
     socketio.emit('update', game)
 
 @socketio.on('bank_points')
 def handle_bank():
     sid = request.sid
     if not game['players'] or game['players'][game['turn_index']]['id'] != sid: return
-    
     if game['current_turn_pts'] >= 350:
         game['scores'][sid] += game['current_turn_pts']
-        
-        # Kontrola výhry 10 000
         if game['scores'][sid] >= 10000:
             game['winner'] = game['players'][game['turn_index']]['name']
-            game['msg'] = f"🎉 {game['winner']} VYHRÁVÁ HRU!"
         else:
             game['current_turn_pts'] = 0
             game['dice_count'] = 6
             game['current_roll'] = []
             game['turn_index'] = (game['turn_index'] + 1) % len(game['players'])
-            game['msg'] = f"Zapsáno. Na řadě je {game['players'][game['turn_index']]['name']}"
-    else:
-        game['msg'] = "⚠️ Musíš mít aspoň 350 bodů!"
-    
     socketio.emit('update', game)
 
 @socketio.on('reset_game')
 def handle_reset():
     global game
-    game = {'players': [], 'scores': {}, 'turn_index': 0, 'current_turn_pts': 0, 'dice_count': 6, 'current_roll': [], 'msg': 'Hra restartována.', 'winner': None}
-    socketio.emit('restart_client')
+    game = {'players': [], 'scores': {}, 'turn_index': 0, 'current_turn_pts': 0, 'dice_count': 6, 'current_roll': [], 'msg': 'Restartováno.', 'winner': None}
+    socketio.emit('reload')
 
 @socketio.on('disconnect')
-def handle_disconnect():
-    # Odstranění hráče při odpojení
-    sid = request.sid
-    game['players'] = [p for p in game['players'] if p['id'] != sid]
-    if not game['players']: handle_reset()
+def handle_disc():
+    game['players'] = [p for p in game['players'] if p['id'] != request.sid]
     socketio.emit('update', game)
 
-# --- HTML / JS ŠABLONA ---
+# --- HTML ŠABLONA ---
 HTML_TEMPLATE = """
 <!DOCTYPE html>
-<html lang="cs">
+<html>
 <head>
     <meta charset="UTF-8">
-    <title>Kostky Online 10000</title>
+    <title>Kostky Arena 10000</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
     <style>
-        body { font-family: 'Segoe UI', sans-serif; background: #121212; color: white; text-align: center; margin: 0; }
-        #login-overlay { position: fixed; top:0; left:0; width:100%; height:100%; background: #1a1a1a; z-index: 100; display: flex; flex-direction: column; justify-content: center; align-items: center; }
-        .table { background: #1e3a1e; padding: 25px; border-radius: 20px; width: 420px; margin: 40px auto; border: 6px solid #3e2723; box-shadow: 0 0 40px rgba(0,0,0,0.6); }
-        .player-row { display: flex; justify-content: space-around; background: rgba(0,0,0,0.4); padding: 10px; border-radius: 10px; margin-bottom: 15px; font-size: 18px; }
-        .active { color: #2ecc71; font-weight: bold; border-bottom: 2px solid #2ecc71; }
-        .die { display: inline-block; width: 50px; height: 50px; line-height: 50px; background: white; color: black; margin: 6px; border-radius: 10px; font-weight: bold; cursor: pointer; font-size: 26px; transition: 0.2s; }
-        .die.selected { background: #f1c40f; transform: translateY(-8px); box-shadow: 0 5px 0 #b7950b; }
-        .btn { width: 100%; padding: 12px; margin: 5px 0; font-weight: bold; cursor: pointer; border-radius: 8px; border: none; font-size: 16px; }
+        body { font-family: 'Segoe UI', sans-serif; background: #0f0f0f; color: white; margin: 0; padding: 20px; }
+        #login { position: fixed; top:0; left:0; width:100%; height:100%; background: #111; z-index:1000; display:flex; flex-direction:column; align-items:center; justify-content:center; }
+        
+        .arena { display: flex; flex-wrap: wrap; justify-content: center; gap: 20px; margin-top: 20px; }
+        
+        .player-card { 
+            width: 300px; padding: 20px; border-radius: 15px; transition: 0.4s; 
+            background: #1a1a1a; border: 4px solid #444; position: relative;
+        }
+        
+        /* Aktivní hráč: Zelená */
+        .player-card.active { 
+            border-color: #2ecc71; background: #1e3a1e; 
+            box-shadow: 0 0 25px rgba(46, 204, 113, 0.4); transform: scale(1.05); z-index: 10;
+        }
+        
+        /* Neaktivní hráč: Červená a tmavá */
+        .player-card.inactive { 
+            border-color: #e74c3c; opacity: 0.6; filter: grayscale(0.5);
+        }
+
+        .score-badge { font-size: 40px; font-weight: bold; margin: 10px 0; }
+        .turn-pts { font-size: 20px; color: #2ecc71; min-height: 24px; }
+        
+        .die { display: inline-block; width: 45px; height: 45px; line-height: 45px; background: white; color: black; 
+               margin: 4px; border-radius: 8px; font-weight: bold; cursor: pointer; font-size: 22px; }
+        .die.selected { background: #f1c40f; transform: translateY(-5px); box-shadow: 0 4px 0 #b7950b; }
+        
+        .controls { margin-top: 15px; }
+        .btn { width: 100%; padding: 12px; margin: 5px 0; border-radius: 8px; border: none; font-weight: bold; cursor: pointer; }
         .btn-roll { background: #2ecc71; color: white; }
         .btn-keep { background: #3498db; color: white; }
         .btn-bank { background: #e67e22; color: white; }
-        .btn:disabled { background: #444; color: #888; cursor: not-allowed; }
+        .btn:disabled { display: none; }
+        
         input { padding: 12px; font-size: 18px; border-radius: 8px; border: none; margin-bottom: 10px; width: 250px; }
     </style>
 </head>
 <body>
-    <div id="login-overlay">
-        <h1>🎲 Kostky Online</h1>
-        <input type="text" id="nick" placeholder="Tvoje přezdívka..." maxlength="15">
-        <button class="btn btn-roll" style="width: 275px;" onclick="join()">VSTOUPIT DO HRY</button>
+    <div id="login">
+        <h1>🎲 Kostky Arena</h1>
+        <input type="text" id="nick" placeholder="Tvé jméno..." maxlength="12">
+        <button class="btn btn-roll" style="width:275px" onclick="join()">VSTOUPIT DO ARENY</button>
     </div>
 
-    <div class="table">
-        <div id="players" class="player-row"></div>
-        <h2 id="msg" style="color: #f1c40f; min-height: 1.2em;"></h2>
-        <div style="font-size: 14px; color: #aaa;">AKTUÁLNÍ TAH</div>
-        <h1 id="turn-pts" style="margin: 5px 0; color: #2ecc71;">0</h1>
-        
-        <div id="dice-container" style="min-height: 70px; margin: 20px 0;"></div>
-        
-        <div id="controls"></div>
-        <button onclick="resetGame()" style="background:none; border:none; color:#555; cursor:pointer; margin-top:20px;">Restartovat celou hru</button>
+    <h2 id="global-msg" style="text-align:center; color:#f1c40f;"></h2>
+    <div id="arena" class="arena"></div>
+    
+    <div style="text-align:center; margin-top:40px;">
+        <button onclick="if(confirm('Reset?')) socket.emit('reset_game')" style="color:#444; background:none; border:none; cursor:pointer;">Restartovat server</button>
     </div>
 
     <script>
@@ -185,63 +180,74 @@ HTML_TEMPLATE = """
 
         function join() {
             const n = document.getElementById('nick').value;
-            if(!n) return alert("Zadej jméno!");
+            if(!n) return;
             socket.emit('join_game', {name: n});
-            document.getElementById('login-overlay').style.display = 'none';
+            document.getElementById('login').style.display = 'none';
         }
 
         socket.on('update', (g) => {
-            const myTurn = g.players.length > 0 && g.players[g.turn_index].id === socket.id;
+            document.getElementById('global-msg').innerText = g.winner ? "🏆 VÍTĚZ: " + g.winner : g.msg;
             
-            // Hráči a skóre
-            const pDiv = document.getElementById('players');
-            pDiv.innerHTML = g.players.map((p, i) => 
-                `<div class="${i === g.turn_index ? 'active' : ''}">${p.name}<br>${g.scores[p.id]}</div>`
-            ).join('');
+            const arena = document.getElementById('arena');
+            arena.innerHTML = '';
 
-            document.getElementById('msg').innerText = g.msg;
-            document.getElementById('turn-pts').innerText = g.current_turn_pts;
+            g.players.forEach((p, index) => {
+                const isActive = index === g.turn_index;
+                const isMe = p.id === socket.id;
+                
+                const card = document.createElement('div');
+                card.className = `player-card ${isActive ? 'active' : 'inactive'}`;
+                
+                let content = `
+                    <h3>${p.name} ${isMe ? '(Ty)' : ''}</h3>
+                    <div class="score-badge">${g.scores[p.id]}</div>
+                    <div class="turn-pts">${isActive ? 'V tahu: ' + g.current_turn_pts : ''}</div>
+                    <hr style="border:0; border-top:1px solid rgba(255,255,255,0.1); margin:15px 0;">
+                `;
 
-            // Kostky
-            const dDiv = document.getElementById('dice-container');
-            dDiv.innerHTML = '';
-            g.current_roll.forEach((val, idx) => {
-                const d = document.createElement('div');
-                d.className = 'die' + (selectedIndices.includes(idx) ? ' selected' : '');
-                d.innerText = val;
-                if(myTurn && !g.winner) d.onclick = () => {
-                    if(selectedIndices.includes(idx)) selectedIndices = selectedIndices.filter(i => i !== idx);
-                    else selectedIndices.push(idx);
-                    d.classList.toggle('selected');
-                };
-                dDiv.appendChild(d);
+                if (isActive) {
+                    content += `<div id="dice-box"></div>`;
+                    if (isMe && !g.winner) {
+                        content += `
+                            <div class="controls">
+                                ${g.current_roll.length === 0 ? 
+                                    `<button class="btn btn-roll" onclick="socket.emit('roll_dice')">HODIT KOSTKAMI (${g.dice_count})</button>` :
+                                    `<button class="btn btn-keep" onclick="confirmKeep()">POTVRDIT VÝBĚR</button>`
+                                }
+                                ${g.current_turn_pts >= 350 ? `<button class="btn btn-bank" onclick="socket.emit('bank_points')">ZAPSAT BODY</button>` : ''}
+                            </div>
+                        `;
+                    }
+                }
+
+                card.innerHTML = content;
+                arena.appendChild(card);
+
+                // Vykreslení kostek do aktivního okna
+                if (isActive && g.current_roll.length > 0) {
+                    const dBox = card.querySelector('#dice-box');
+                    g.current_roll.forEach((val, i) => {
+                        const d = document.createElement('div');
+                        d.className = 'die' + (selectedIndices.includes(i) ? ' selected' : '');
+                        d.innerText = val;
+                        if (isMe) d.onclick = () => {
+                            if(selectedIndices.includes(i)) selectedIndices = selectedIndices.filter(x => x !== i);
+                            else selectedIndices.push(i);
+                            d.classList.toggle('selected');
+                        };
+                        dBox.appendChild(d);
+                    });
+                }
             });
-
-            // Tlačítka
-            const cDiv = document.getElementById('controls');
-            cDiv.innerHTML = '';
-            if(!g.winner && g.players.length >= 1) {
-                if(g.current_roll.length === 0) {
-                    cDiv.innerHTML = `<button class="btn btn-roll" ${!myTurn?'disabled':''} onclick="socket.emit('roll_dice')">HODIT KOSTKAMI (${g.dice_count})</button>`;
-                } else {
-                    cDiv.innerHTML = `<button class="btn btn-keep" ${!myTurn?'disabled':''} onclick="confirmKeep()">POTVRDIT VÝBĚR</button>`;
-                }
-                if(g.current_turn_pts > 0) {
-                    cDiv.innerHTML += `<button class="btn btn-bank" ${!myTurn?'disabled':''} onclick="socket.emit('bank_points')">UKONČIT TAH A ZAPSAT</button>`;
-                }
-            } else if(g.winner) {
-                cDiv.innerHTML = `<h2 style="color:#f1c40f">Vítěz: ${g.winner}!</h2>`;
-            }
         });
 
         function confirmKeep() {
-            if(selectedIndices.length === 0) return alert("Vyber aspoň jednu kostku!");
+            if(selectedIndices.length === 0) return alert("Vyber aspoň jednu!");
             socket.emit('keep_dice', {indices: selectedIndices});
             selectedIndices = [];
         }
 
-        function resetGame() { if(confirm("Opravdu restartovat?")) socket.emit('reset_game'); }
-        socket.on('restart_client', () => { window.location.reload(); });
+        socket.on('reload', () => location.reload());
     </script>
 </body>
 </html>

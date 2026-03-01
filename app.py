@@ -1,24 +1,3 @@
-# ... (ponech importy a nastavení socketio) ...
-
-# --- ROUTY (CESTY) ---
-
-@app.route('/')
-def index():
-    # Toto zobrazí tvé menu (index.html)
-    return render_template('index.html')
-
-@app.route('/kostky')
-def hra_kostky():
-    # Toto spustí tvůj stávající HTML_TEMPLATE pro kostky
-    return render_template_string(HTML_TEMPLATE)
-
-@app.route('/prsi')
-def hra_prsi():
-    # Toto zobrazí stránku s Prším
-    return render_template('prsi.html')
-
-# ... (ponech zbytek kódu s logikou socketio a vypocitej_body) ...
-
 
 
 

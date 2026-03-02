@@ -1,89 +1,167 @@
 import random
+from flask import Blueprint, render_template_string, request
 
-class PrsiGame:
-    def __init__(self):
-        self.barvy = ['Srdce', 'Kule', 'Zelené', 'Žaludy']
-        self.hodnoty = ['7', '8', '9', '10', 'Spodek', 'Svršek', 'Král', 'Eso']
-        self.reset()
+prsi_bp = Blueprint('prsi', __name__)
 
-    def reset(self):
-        # Vytvoření balíčku 32 karet
-        self.deck = [{'b': b, 'h': h} for b in self.barvy for h in self.hodnoty]
-        random.shuffle(self.deck)
+# --- LOGIKA KARET ---
+SUITS = ['Srdce', 'Kule', 'Žaludy', 'Zelené']
+VALUES = ['7', '8', '9', '10', 'J', 'Q', 'K', 'A']
+
+def vytvor_balicek():
+    balicek = [{'suit': s, 'val': v} for s in SUITS for v in VALUES]
+    random.shuffle(balicek)
+    return balicek
+
+# --- STAV HRY ---
+game = {
+    'players': [],
+    'deck': [],
+    'discard': [],
+    'turn_index': 0,
+    'msg': 'Čeká se na hráče...',
+    'winner': None,
+    'penalty': 0, # Pro sedmy (2, 4, 6... karet)
+    'skip_next': False # Pro esa
+}
+
+@prsi_bp.route('/prsi_hram')
+def index():
+    return render_template_string(HTML_PRSI)
+
+def register_prsi_sockets(socketio):
+    
+    @socketio.on('join_prsi')
+    def handle_join(data):
+        sid = request.sid
+        name = data.get('name', 'Hráč').strip()[:12]
+        if not any(p['id'] == sid for p in game['players']) and len(game['players']) < 4:
+            # Rozdáme 4 karty novému hráči
+            if not game['deck']: 
+                game['deck'] = vytvor_balicek()
+                game['discard'] = [game['deck'].pop()]
+            
+            hand = [game['deck'].pop() for _ in range(4)]
+            game['players'].append({'id': sid, 'name': name, 'hand': hand})
+            game['msg'] = f"{name} se připojil."
+        socketio.emit('update_prsi', game)
+
+    @socketio.on('play_card')
+    def handle_play(data):
+        sid = request.sid
+        if not game['players'] or game['players'][game['turn_index']]['id'] != sid: return
         
-        # Rozdání karet (4 každému)
-        self.player_hand = [self.deck.pop() for _ in range(4)]
-        self.pc_hand = [self.deck.pop() for _ in range(4)]
-        
-        # První karta na stůl (nesmí to být speciální karta pro zjednodušení začátku)
-        start_card = self.deck.pop()
-        self.stack = [start_card]
-        self.current_color = start_card['b']
-        self.turn = 'player'
-        self.msg = "Hra začala! Tvůj tah."
+        card_idx = data.get('idx')
+        player = game['players'][game['turn_index']]
+        card = player['hand'][card_idx]
+        top_card = game['discard'][-1]
 
-    def get_state(self):
-        return {
-            'player_hand': self.player_hand,
-            'pc_hand_count': len(self.pc_hand),
-            'stack_top': self.stack[-1],
-            'current_color': self.current_color,
-            'msg': self.msg,
-            'deck_count': len(self.deck),
-            'turn': self.turn
+        # Základní pravidlo: stejná barva nebo stejná hodnota
+        if card['suit'] == top_card['suit'] or card['val'] == top_card['val'] or card['val'] == 'Q':
+            player['hand'].pop(card_idx)
+            game['discard'].append(card)
+            
+            # Kontrola výhry
+            if not player['hand']:
+                game['winner'] = player['name']
+                game['msg'] = f"🏆 {player['name']} VYHRÁL!"
+            else:
+                # Speciální karty (zjednodušeně)
+                if card['val'] == '7': game['penalty'] += 2
+                if card['val'] == 'A': game['skip_next'] = True
+                
+                game['turn_index'] = (game['turn_index'] + 1) % len(game['players'])
+                game['msg'] = f"Na řadě je {game['players'][game['turn_index']]['name']}."
+            
+            socketio.emit('update_prsi', game)
+
+    @socketio.on('draw_card')
+    def handle_draw():
+        sid = request.sid
+        if not game['players'] or game['players'][game['turn_index']]['id'] != sid: return
+        
+        player = game['players'][game['turn_index']]
+        # Lízání (buď trest za sedmu nebo 1 karta)
+        num_to_draw = max(1, game['penalty'])
+        for _ in range(num_to_draw):
+            if not game['deck']: # Pokud dojde balíček, otočíme odhazovací
+                last = game['discard'].pop()
+                game['deck'] = game['discard']
+                random.shuffle(game['deck'])
+                game['discard'] = [last]
+            
+            player['hand'].append(game['deck'].pop())
+        
+        game['penalty'] = 0
+        game['turn_index'] = (game['turn_index'] + 1) % len(game['players'])
+        socketio.emit('update_prsi', game)
+
+# --- HTML ŠABLONA ---
+HTML_PRSI = """
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Prší Online</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    <style>
+        body { font-family: sans-serif; background: #0e3d1a; color: white; text-align: center; }
+        .hand { display: flex; justify-content: center; gap: 10px; margin-top: 50px; flex-wrap: wrap; }
+        .card { 
+            width: 80px; height: 120px; background: white; color: black; 
+            border-radius: 10px; border: 2px solid #333; cursor: pointer;
+            display: flex; flex-direction: column; justify-content: center;
+            font-weight: bold; font-size: 20px;
+        }
+        .card.Srdce, .card.Kule { color: red; }
+        .top-card-box { margin: 30px auto; width: 100px; height: 140px; border: 4px solid #f1c40f; border-radius: 15px; background: rgba(0,0,0,0.2); display: flex; align-items: center; justify-content: center; }
+        #login { position: fixed; top:0; left:0; width:100%; height:100%; background: #111; z-index:1000; display:flex; flex-direction:column; align-items:center; justify-content:center; }
+    </style>
+</head>
+<body>
+    <div id="login">
+        <h1>🃏 Prší Arena</h1>
+        <input type="text" id="nick" placeholder="Jméno...">
+        <button onclick="join()">HRÁT</button>
+    </div>
+
+    <a href="/" style="color: white; text-decoration: none;">← Menu</a>
+    <h2 id="msg"></h2>
+    
+    <div style="display: flex; justify-content: center; align-items: center; gap: 50px;">
+        <div><h3>Balíček</h3><div class="card" onclick="socket.emit('draw_card')" style="background: #222; color: white;">🂠</div></div>
+        <div><h3>V balíku</h3><div id="top-card" class="top-card-box"></div></div>
+    </div>
+
+    <div id="my-hand" class="hand"></div>
+
+    <script>
+        const socket = io();
+        function join() {
+            const n = document.getElementById('nick').value;
+            if(n) { socket.emit('join_prsi', {name: n}); document.getElementById('login').style.display='none'; }
         }
 
-    def play_card(self, card_idx):
-        if self.turn != 'player': return False
-        
-        card = self.player_hand[card_idx]
-        top = self.stack[-1]
+        socket.on('update_prsi', (g) => {
+            document.getElementById('msg').innerText = g.msg;
+            const top = g.discard[g.discard.length - 1];
+            const topBox = document.getElementById('top-card');
+            topBox.innerHTML = `<div class="card ${top.suit}">${top.val}<br>${top.suit[0]}</div>`;
 
-        # Pravidlo: Stejná barva, stejná hodnota nebo Svršek
-        if card['b'] == self.current_color or card['h'] == top['h'] or card['h'] == 'Svršek':
-            self.stack.append(self.player_hand.pop(card_idx))
-            self.current_color = card['b']
+            const me = g.players.find(p => p.id === socket.id);
+            const handBox = document.getElementById('my-hand');
+            handBox.innerHTML = '';
             
-            if len(self.player_hand) == 0:
-                self.msg = "🎉 VYHRÁL JSI!"
-                self.turn = 'end'
-            else:
-                self.turn = 'pc'
-                self.msg = "Hraje počítač..."
-            return True
-        return False
-
-    def pc_turn(self):
-        if self.turn != 'pc': return
-        
-        top = self.stack[-1]
-        # Najde kartu, kterou může zahrát
-        mozne_indexy = [i for i, c in enumerate(self.pc_hand) 
-                        if c['b'] == self.current_color or c['h'] == top['h'] or c['h'] == 'Svršek']
-        
-        if mozne_indexy:
-            idx = mozne_indexy[0]
-            karta = self.pc_hand.pop(idx)
-            self.stack.append(karta)
-            self.current_color = karta['b']
-            self.msg = f"Počítač zahrál {karta['h']} {karta['b']}."
-        else:
-            if self.deck:
-                self.pc_hand.append(self.deck.pop())
-                self.msg = "Počítač si lízl kartu."
-            else:
-                self.msg = "Balíček je prázdný, počítač stojí."
-        
-        if len(self.pc_hand) == 0:
-            self.msg = "💀 Prohrál jsi! Počítač je bez karet."
-            self.turn = 'end'
-        else:
-            self.turn = 'player'
-
-    def draw_card(self):
-        if self.turn == 'player' and self.deck:
-            self.player_hand.append(self.deck.pop())
-            self.turn = 'pc'
-            self.msg = "Lízl jsi si. Hraje počítač..."
-            return True
-        return False
+            if(me) {
+                me.hand.forEach((c, i) => {
+                    const div = document.createElement('div');
+                    div.className = `card ${c.suit}`;
+                    div.innerHTML = `${c.val}<br>${c.suit[0]}`;
+                    div.onclick = () => socket.emit('play_card', {idx: i});
+                    handBox.appendChild(div);
+                });
+            }
+        });
+    </script>
+</body>
+</html>
+"""

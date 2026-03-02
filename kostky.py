@@ -2,10 +2,8 @@ import random
 from flask import Blueprint, render_template_string, request
 from flask_socketio import emit
 
-# Definice Blueprintu
 kostky_bp = Blueprint('kostky', __name__)
 
-# --- GLOBÁLNÍ STAV HRY KOSTKY ---
 game = {
     'players': [],
     'scores': {},
@@ -34,9 +32,7 @@ def vypocitej_body(vyber):
         else: return 0
     return body
 
-# Funkce, kterou zavoláme v app.py pro registraci socketů
 def register_kostky_sockets(socketio):
-    
     @socketio.on('join_game', namespace='/kostky')
     def handle_join(data):
         sid = request.sid
@@ -110,7 +106,6 @@ def register_kostky_sockets(socketio):
         game.update({'players': [], 'scores': {}, 'turn_index': 0, 'current_turn_pts': 0, 'dice_count': 6, 'current_roll': [], 'selected_indices': [], 'msg': 'Restart.', 'winner': None, 'finisher_sid': None})
         emit('reload', broadcast=True, namespace='/kostky')
 
-# --- HTML ŠABLONA ---
 HTML_KOSTKY = """
 <!DOCTYPE html>
 <html>
@@ -122,31 +117,36 @@ HTML_KOSTKY = """
         body { font-family: 'Segoe UI', sans-serif; background: #0f0f0f; color: white; margin: 0; padding: 20px; }
         #login { position: fixed; top:0; left:0; width:100%; height:100%; background: #111; z-index:1000; display:flex; flex-direction:column; align-items:center; justify-content:center; }
         .arena { display: flex; flex-wrap: wrap; justify-content: center; gap: 20px; margin-top: 20px; }
-        .player-card { width: 300px; padding: 20px; border-radius: 15px; transition: 0.4s; background: #1a1a1a; border: 4px solid #444; text-align: center; }
-        .player-card.active { border-color: #2ecc71; background: #1e3a1e; box-shadow: 0 0 25px #2ecc7166; transform: scale(1.05); }
-        .die { width: 45px; height: 45px; line-height: 45px; background: white; color: black; border-radius: 8px; font-weight: bold; cursor: pointer; font-size: 22px; margin: 2px; display: inline-block;}
-        .die.selected { background: #f1c40f; transform: translateY(-5px); box-shadow: 0 4px 0 #b7950b; }
+        .player-card { width: 300px; padding: 20px; border-radius: 15px; background: #1a1a1a; border: 4px solid #444; text-align: center; }
+        .player-card.active { border-color: #2ecc71; background: #1e3a1e; }
+        .die { width: 45px; height: 45px; line-height: 45px; background: white; color: black; border-radius: 8px; font-weight: bold; cursor: pointer; display: inline-block; margin: 5px; }
+        .die.selected { background: #f1c40f; box-shadow: 0 4px 0 #b7950b; }
         .btn { width: 100%; padding: 12px; margin: 5px 0; border-radius: 8px; border: none; font-weight: bold; cursor: pointer; }
         .btn-roll { background: #2ecc71; color: white; }
-        .btn-keep { background: #3498db; color: white; }
-        .btn-bank { background: #e67e22; color: white; }
     </style>
 </head>
 <body>
-    <a href="/" style="color: #888; text-decoration: none;">← Zpět do menu</a>
     <div id="login">
         <h1>🎲 Kostky Arena</h1>
-        <input type="text" id="nick" style="padding:10px; width:250px;" placeholder="Tvé jméno...">
-        <button class="btn btn-roll" style="width:270px; margin-top:10px;" onclick="join()">VSTOUPIT</button>
+        <input type="text" id="nick" placeholder="Tvé jméno..." style="padding:10px; width:250px;">
+        <button class="btn btn-roll" style="width:270px; margin-top:10px;" id="join-btn">VSTOUPIT</button>
     </div>
+    <a href="/" style="color: #888; text-decoration: none;">← Zpět do menu</a>
     <h2 id="global-msg" style="text-align:center; color:#f1c40f;"></h2>
     <div id="arena" class="arena"></div>
+
     <script>
         const socket = io('/kostky');
-        function join() {
+        
+        // Oprava: Definice join přímo přes ID tlačítka, aby se předešlo ReferenceError
+        document.getElementById('join-btn').onclick = function() {
             const n = document.getElementById('nick').value;
-            if(n) { socket.emit('join_game', {name: n}); document.getElementById('login').style.display = 'none'; }
-        }
+            if(n) {
+                socket.emit('join_game', {name: n});
+                document.getElementById('login').style.display = 'none';
+            }
+        };
+
         socket.on('update', (g) => {
             document.getElementById('global-msg').innerText = g.msg;
             const arena = document.getElementById('arena');
@@ -161,8 +161,8 @@ HTML_KOSTKY = """
                 if(isMe && isActive && !g.winner) {
                    card.innerHTML += g.current_roll.length === 0 ? 
                    '<button class="btn btn-roll" onclick="socket.emit(\'roll_dice\')">HODIT</button>' :
-                   '<button class="btn btn-keep" onclick="socket.emit(\'keep_dice\')">POTVRDIT</button>';
-                   if(g.current_turn_pts >= 350) card.innerHTML += '<button class="btn btn-bank" onclick="socket.emit(\'bank_points\')">ZAPSAT</button>';
+                   '<button class="btn btn-keep" style="background:#3498db; color:white;" onclick="socket.emit(\'keep_dice\')">POTVRDIT</button>';
+                   if(g.current_turn_pts >= 350) card.innerHTML += '<button class="btn" style="background:#e67e22; color:white;" onclick="socket.emit(\'bank_points\')">ZAPSAT</button>';
                 }
                 arena.appendChild(card);
                 if(isActive && g.current_roll.length > 0) {

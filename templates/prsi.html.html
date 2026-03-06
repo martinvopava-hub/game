@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+    <meta charset="UTF-8">
+    <title>Prší 2026</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    <style>
+        :root { --gold: #c5a059; --dark-green: #0a2f1a; --parchment: #e8dfc8; }
+        body { background: #1a1a1a; color: white; font-family: 'Palatino', serif; text-align: center; }
+        
+        .card {
+            width: 140px; height: 210px; background: var(--parchment);
+            border: 4px solid var(--dark-green); border-radius: 10px;
+            position: relative; display: inline-block; margin: 5px; cursor: pointer; color: var(--dark-green);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.5);
+        }
+        .card.hidden { background: #5d1313; border-color: white; }
+        .label { position: absolute; font-size: 20px; font-weight: bold; }
+        .label-tl { top: 5px; left: 8px; }
+        .label-br { bottom: 5px; right: 8px; transform: rotate(180deg); }
+        
+        .symbol-img { width: 60px; height: 60px; margin-top: 75px; background-size: contain; background-repeat: no-repeat; background-position: center; display: inline-block; }
+        
+        #picker { display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%); background: #222; padding: 20px; border: 2px solid gold; z-index: 100; }
+        .p-btn { width: 60px; height: 60px; margin: 5px; cursor: pointer; border-radius: 5px; }
+    </style>
+</head>
+<body>
+    <div id="picker">
+        <h3>Vyber barvu:</h3>
+        <img src="/static/srdce.png" class="p-btn" onclick="chooseColor('srdce')">
+        <img src="/static/list.png" class="p-btn" onclick="chooseColor('list')">
+        <img src="/static/zalud.png" class="p-btn" onclick="chooseColor('zalud')">
+        <img src="/static/koule.png" class="p-btn" onclick="chooseColor('koule')">
+    </div>
+
+    <h1>Prší Arena</h1>
+    <div id="pc-area"></div>
+    <hr>
+    <div id="table">
+        <h3 id="msg"></h3>
+        <div class="card hidden" onclick="socket.emit('prsi_draw')">LÍZAT</div>
+        <div id="stack-top"></div>
+    </div>
+    <hr>
+    <div id="player-hand"></div>
+
+    <script>
+        const socket = io();
+        let svrs_idx = null;
+
+        socket.on('update_prsi', (g) => {
+            document.getElementById('msg').innerText = g.msg + (g.penalty > 0 ? " (BEREŠ "+g.penalty+")" : "");
+            
+            const render = (c, idx, isPlayer) => `
+                <div class="card" onclick="${isPlayer ? `play(${idx},'${c.h}')` : ''}">
+                    <div class="label label-tl">${c.h}</div>
+                    <div class="symbol-img" style="background-image: url('/static/${c.b}.png')"></div>
+                    <div class="label label-br">${c.h}</div>
+                </div>`;
+
+            document.getElementById('stack-top').innerHTML = render(g.stack_top, 0, false);
+            document.getElementById('player-hand').innerHTML = g.player_hand.map((c, i) => render(c, i, true)).join('');
+            document.getElementById('pc-area').innerHTML = `<div class="card hidden"></div>`.repeat(g.pc_hand_count);
+        });
+
+        function play(idx, val) {
+            if(val === 'V') { svrs_idx = idx; document.getElementById('picker').style.display='block'; }
+            else { socket.emit('prsi_play', {idx: idx}); }
+        }
+
+        function chooseColor(c) {
+            socket.emit('prsi_play', {idx: svrs_idx, color: c});
+            document.getElementById('picker').style.display='none';
+        }
+
+        socket.emit('request_prsi_update');
+    </script>
+</body>
+</html>

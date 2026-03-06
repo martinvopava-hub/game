@@ -1,4 +1,81 @@
-import random
+import eventlet
+eventlet.monkey_patch()
+
+import os
+from flask import Flask, render_template, request
+from flask_socketio import SocketIO, emit
+from prsi import PrsiGame  # Předpokládá, že máš třídu PrsiGame v souboru prsi.py
+
+app = Flask(__name__)
+app.config['SECRET_KEY'] = 'prsi-tajny-klic-2026'
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
+
+# Inicializace hry
+game = PrsiGame()
+
+@app.route('/')
+def index():
+    return render_template('index.html')
+
+@app.route('/prsi')
+def prsi_page():
+    return render_template('prsi.html')
+
+# --- SOCKET.IO EVENTY ---
+
+@socketio.on('request_prsi_update')
+def handle_update_request():
+    emit('update_prsi', game.get_state())
+
+@socketio.on('prsi_play')
+def handle_play(data):
+    idx = data.get('idx')
+    chosen_color = data.get('color') # Barva od Svrška
+    
+    # Pokus o zahrání karty hráčem
+    success = game.play_card(idx, is_player=True, chosen_color=chosen_color)
+    
+    if success:
+        # Pokud hráč vyhodil kartu, pošleme update a pak necháme hrát PC
+        game.msg = "Hraje počítač..."
+        emit('update_prsi', game.get_state(), broadcast=True)
+        
+        eventlet.sleep(1.5) # Pauza, aby hráč viděl, co se děje
+        pc_logic()
+    else:
+        # Pokud tah nebyl platný (např. špatná barva), pošleme varování jen hráči
+        emit('update_prsi', game.get_state())
+
+@socketio.on('prsi_draw')
+def handle_draw():
+    # Hráč si líže (nebo stojí/bere trestné karty)
+    game.draw(is_player=True)
+    emit('update_prsi', game.get_state(), broadcast=True)
+    
+    eventlet.sleep(1)
+    pc_logic()
+
+def pc_logic():
+    # Jednoduchá logika pro PC
+    state = game.get_state()
+    if state['turn'] == 'pc':
+        # Zkusíme najít kartu, kterou může PC zahrát
+        played = False
+        for i in range(len(game.pc_hand)):
+            # PC zahraje první možnou kartu (pokud je Svršek, vybere si srdce)
+            if game.play_card(i, is_player=False, chosen_color='srdce'):
+                played = True
+                break
+        
+        if not played:
+            game.draw(is_player=False)
+            
+        emit('update_prsi', game.get_state(), broadcast=True)
+
+if __name__ == '__main__':
+    port = int(os.environ.get("PORT", 5000))
+    socketio.run(app, host='0.0.0.0', port=port)
+    import random
 
 class PrsiGame:
     def __init__(self):
